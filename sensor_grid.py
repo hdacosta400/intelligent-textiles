@@ -41,6 +41,7 @@ class SensorGridFrame(wx.Frame):
         self.rectangle = rectangle
         self.upper_left, self.upper_right, self.lower_left, self.lower_right = self.rectangle.get_rectangle_points()
         self.svg = svg
+        self.paths = []
         
 
 
@@ -59,6 +60,8 @@ class SensorGridFrame(wx.Frame):
         self.horizontal_wire_spinner = wx.SpinCtrl(self, wx.ID_ANY, min = 1, initial = 1);
         self.horizontal_wire_spinner.Bind(wx.EVT_SPINCTRL, lambda event: self.on_change("horizontal_wires", event))
 
+        self.horizontal_wire = None
+        self.vertical_wire = None
 
         self.cancel_button = wx.Button(self, wx.ID_ANY, _("Cancel"))
         self.cancel_button.Bind(wx.EVT_BUTTON, self.cancel)
@@ -99,66 +102,122 @@ class SensorGridFrame(wx.Frame):
 
     def create_grid_layout(self):
         # check vertical and horizontal spacing
-        horizontal_spacing = round(self.rectangle.height / self.horizontal_wire_spinner.GetValue(),2)
-        vertical_spacing = round(self.rectangle.width / self.vertical_wire_spinner.GetValue(), 2) 
-        if (horizontal_spacing < MIN_GRID_SPACING):
+        total_horizontal_spacing = self.rectangle.height / (self.horizontal_wire_spinner.GetValue() + 1)
+        total_vertical_spacing = self.rectangle.width / (self.vertical_wire_spinner.GetValue() + 1)
+        # can only actually add wires within boundaries of rectangle
+        horizontal_wire_spacing = (self.rectangle.height - total_horizontal_spacing) / self.horizontal_wire_spinner.GetValue()
+        vertical_wire_spacing = (self.rectangle.width - total_vertical_spacing) / self.vertical_wire_spinner.GetValue()
+        if (horizontal_wire_spacing < MIN_GRID_SPACING):
             inkex.errormsg('''The horizontal wires must be at least {} mm apart
                             They are currently {} mm apart. Either decrease the
-                            number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, horizontal_spacing))
+                            number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, horizontal_wire_spacing))
             return
-        if (vertical_spacing < MIN_GRID_SPACING):
+        if (vertical_wire_spacing < MIN_GRID_SPACING):
             inkex.errormsg('''The vertical wires must be at least {} mm apart 
                             They are currently {} mm apart. Either decrease the
-                            number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, vertical_spacing))
-        #draw wires
-        path = inkex.PathElement(attrib={
-        'id': "HERE",
-        'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % "red",
-        'd': "m 40,86 H 10 ",
-        # 'transform': inkex.get_correction_transform(svg),
-        })
-        # v for vertical lines!
+                            number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, vertical_wire_spacing))
+        self.lay_horizontal_wires(total_horizontal_spacing)
+        self.lay_vertical_wires(total_vertical_spacing)
 
-        # path2 = inkex.PathElement(attrib={
-        # 'id': "HERE",
-        # 'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % "red",
-        # 'd': "m 0,89.039999 h 30.48 l 45.719999,22.86 ",
-        # # 'transform': inkex.get_correction_transform(svg),
-        # })
-        # self.svg.get_current_layer().append(path)
-        self.lay_horizontal_wires(vertical_spacing)
-        # self.svg.get_current_layer().append(path2)
-    #             'd': "M" + " ".join(" ".join(str(coord) for coord in point) for point in point_list),
+    def lay_horizontal_wires(self, horizontal_wire_spacing):
+        '''
+        vert spacing:2.9, curr_point_top: 26.509441, bottom: 38.099998
 
-    def lay_horizontal_wires(self, vertical_spacing):
+         4 curr_point_top: 38.09999799999999, bottom: 38.099998
+        '''
         curr_point = list(self.upper_left)
-        curr_point[1] += vertical_spacing # start above border
-        while True:
-            inkex.errormsg("where tf is current point:{}, rectangle width:{}".format(curr_point, self.rectangle.width))
-            self.create_wire_segment(curr_point, True)
-            curr_point[1] += vertical_spacing
-            self.create_wire_segment(curr_point, True)
-            break
+        inkex.errormsg("vert spacing:{}, curr_point_top: {}, bottom: {}".format(horizontal_wire_spacing, curr_point[1], self.rectangle.bottom))
+        wire_count = 0
+        points = []
+        while round(curr_point[1]) != round(self.rectangle.bottom - horizontal_wire_spacing):
+            curr_point[1] += horizontal_wire_spacing
+            inkex.errormsg(" 1 curr_point_top: {}, bottom: {}".format(curr_point[1], self.rectangle.bottom))
+            # self.create_wire_segment(curr_point, self.rectangle.width, True)
+            points.append('{},{}'.format(curr_point[0], curr_point[1]))
+            wire_count += 1
+            if wire_count < self.horizontal_wire_spinner.GetValue(): # avoid last wire to prevent shorting
+                if wire_count % 2 == 1: # need to draw joining segment on right side
+                    # self.create_wire_joiner([self.rectangle.right, curr_point[1]], horizontal_wire_spacing, is_horizontal=False)
+                    points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
+                    points.append('{},{}'.format(self.rectangle.right, curr_point[1] + horizontal_wire_spacing))
+                else: # need to draw joining segment on left side
+                    # self.create_wire_joiner([self.rectangle.left, curr_point[1]], horizontal_wire_spacing, is_horizontal=False)
+                    points.append('{},{}'.format(self.rectangle.left, curr_point[1]))
+                    points.append('{},{}'.format(self.rectangle.left, curr_point[1] + horizontal_wire_spacing))
+        inkex.errormsg("points:{}".format(points))
+        self.create_path(points, is_horizontal=True)
 
+    def lay_vertical_wires(self, vertical_wire_spacing):
+        curr_point = list(self.upper_left)
+        inkex.errormsg("vert spacing:{}, curr_point_top: {}, bottom: {}".format(vertical_wire_spacing, curr_point[1], self.rectangle.right))
+        wire_count = 0
+        points = []
+        while round(curr_point[0]) != round(self.rectangle.right - vertical_wire_spacing):
+            curr_point[0] += vertical_wire_spacing
+            points.append('{},{}'.format(curr_point[0], curr_point[1]))
+            inkex.errormsg(" 1 curr_point_top: {}, bottom: {}".format(curr_point[0], self.rectangle.right))
+            # self.create_wire_segment(curr_point, self.rectangle.height, False)
+            wire_count += 1
+            if wire_count < self.vertical_wire_spinner.GetValue():
+                if wire_count % 2 == 1: # need to draw joining segment on bottom side
+                    # self.create_wire_joiner([curr_point[0], self.rectangle.bottom], vertical_wire_spacing, is_horizontal=True)
+                    points.append('{},{}'.format(curr_point[0], self.rectangle.bottom))
+                    points.append('{},{}'.format(curr_point[0] + vertical_wire_spacing, self.rectangle.bottom))
+                else: # need to draw joining segment on top side
+                    # self.create_wire_joiner([curr_point[0], self.rectangle.top], vertical_wire_spacing, is_horizontal=True)
+                    points.append('{},{}'.format(curr_point[0], self.rectangle.top))
+                    points.append('{},{}'.format(curr_point[0] + vertical_wire_spacing, self.rectangle.top))
+        self.create_path(points, is_horizontal=False)
 
-    def format_point_str(self,points):
+    def create_path(self, points, is_horizontal):
         '''
-        formats list of points so they can get passed into PathElement
+        Creates a wire segment path given all of the points sequentially
         '''
-        pass
-    
-    def create_wire_segment(self, start_point, is_horizontal):
         color = "red" if is_horizontal else "blue"
-        direction = "h" if is_horizontal else "v"
-        length = self.rectangle.width if is_horizontal else self.rectangle.height
-        path = inkex.PathElement(attrib={
+        path_str = ' '.join(points)
+        path = inkex.Polyline(attrib={
         'id': "wire_segment",
         'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-        'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
+        'points': path_str,
         # 'transform': inkex.get_correction_transform(svg),
         })
         self.svg.get_current_layer().append(path)
+        # store wire objects for future use
+        if is_horizontal:
+            self.horizontal_wire = path
+        else:
+            self.vertical_wire = path
+            
+    # OLD DISJOING CODE -- will save just in case it is needed for routing???
+    # def create_wire_segment(self, start_point, length, is_horizontal):
+    #     color = "red" if is_horizontal else "blue"
+    #     direction = "h" if is_horizontal else "v"
+    #     # length = self.rectangle.width if is_horizontal else self.rectangle.height
+    #     path = inkex.PathElement(attrib={
+    #     'id': "wire_segment",
+    #     'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
+    #     'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
+    #     # 'transform': inkex.get_correction_transform(svg),
+    #     })
+    #     self.svg.get_current_layer().append(path)
     
+    
+    # def create_wire_joiner(self, start_point, length, is_horizontal):
+    #     '''
+    #     joins two wires going in the same direction for continuous sowing
+    #     '''
+    #     color = "blue" if is_horizontal else "red"
+    #     direction = "h" if is_horizontal else "v"
+    #     path = inkex.PathElement(attrib={
+    #     'id': "wire_segment",
+    #     'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
+    #     'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
+    #     # 'transform': inkex.get_correction_transform(svg),
+    #     })
+    #     self.svg.get_current_layer().append(path)
+
+
+
     def close(self):
         self.preview.close()
         self.Destroy()
