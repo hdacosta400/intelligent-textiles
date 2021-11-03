@@ -7,7 +7,7 @@ from argparse import ArgumentParser, REMAINDER
 
 import appdirs
 import inkex
-from inkex import Line, Rectangle
+from inkex import Line, Rectangle, Path
 import wx
 import wx.adv
 from lxml import etree
@@ -43,10 +43,6 @@ class SensorGridFrame(wx.Frame):
         self.svg = svg
         self.paths = []
         
-
-
-        inkex.errormsg("dims in GUI: {} x {}".format(self.rectangle.width, self.rectangle.height))
-
         self.cancel_hook = kwargs.pop('on_cancel', None)
         wx.Frame.__init__(self, None, wx.ID_ANY,
                           _("Ink/Stitch Sensor Grid")
@@ -116,6 +112,7 @@ class SensorGridFrame(wx.Frame):
             inkex.errormsg('''The vertical wires must be at least {} mm apart 
                             They are currently {} mm apart. Either decrease the
                             number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, vertical_wire_spacing))
+            return
         self.lay_horizontal_wires(total_horizontal_spacing)
         self.lay_vertical_wires(total_vertical_spacing)
 
@@ -144,7 +141,7 @@ class SensorGridFrame(wx.Frame):
                     # self.create_wire_joiner([self.rectangle.left, curr_point[1]], horizontal_wire_spacing, is_horizontal=False)
                     points.append('{},{}'.format(self.rectangle.left, curr_point[1]))
                     points.append('{},{}'.format(self.rectangle.left, curr_point[1] + horizontal_wire_spacing))
-        inkex.errormsg("points:{}".format(points))
+        inkex.errormsg("horizontal points:{}".format(points))
         self.create_path(points, is_horizontal=True)
 
     def lay_vertical_wires(self, vertical_wire_spacing):
@@ -167,6 +164,7 @@ class SensorGridFrame(wx.Frame):
                     # self.create_wire_joiner([curr_point[0], self.rectangle.top], vertical_wire_spacing, is_horizontal=True)
                     points.append('{},{}'.format(curr_point[0], self.rectangle.top))
                     points.append('{},{}'.format(curr_point[0] + vertical_wire_spacing, self.rectangle.top))
+        inkex.errormsg("vertical points:{}".format(points))
         self.create_path(points, is_horizontal=False)
 
     def create_path(self, points, is_horizontal):
@@ -187,36 +185,6 @@ class SensorGridFrame(wx.Frame):
             self.horizontal_wire = path
         else:
             self.vertical_wire = path
-            
-    # OLD DISJOING CODE -- will save just in case it is needed for routing???
-    # def create_wire_segment(self, start_point, length, is_horizontal):
-    #     color = "red" if is_horizontal else "blue"
-    #     direction = "h" if is_horizontal else "v"
-    #     # length = self.rectangle.width if is_horizontal else self.rectangle.height
-    #     path = inkex.PathElement(attrib={
-    #     'id': "wire_segment",
-    #     'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-    #     'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
-    #     # 'transform': inkex.get_correction_transform(svg),
-    #     })
-    #     self.svg.get_current_layer().append(path)
-    
-    
-    # def create_wire_joiner(self, start_point, length, is_horizontal):
-    #     '''
-    #     joins two wires going in the same direction for continuous sowing
-    #     '''
-    #     color = "blue" if is_horizontal else "red"
-    #     direction = "h" if is_horizontal else "v"
-    #     path = inkex.PathElement(attrib={
-    #     'id': "wire_segment",
-    #     'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-    #     'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
-    #     # 'transform': inkex.get_correction_transform(svg),
-    #     })
-    #     self.svg.get_current_layer().append(path)
-
-
 
     def close(self):
         self.preview.close()
@@ -249,7 +217,7 @@ class SensorGridFrame(wx.Frame):
         size.height = size.height + 200
         self.SetSize(size)
 
-class RectangleMetadata():
+class BoundingBoxMetadata():
     '''
     Storage class to hold important information about rectangle
     '''
@@ -272,6 +240,18 @@ class RectangleMetadata():
             (self.left, self.bottom),
             (self.right, self.bottom)
         ]
+    def get_rectangle_path(self):
+        '''
+        get polyline path to draw rectangle
+        '''
+        ul, ur, ll, lr = self.get_rectangle_points()
+        rectangle_sides = []
+        rectangle_sides.append('{},{}'.format(ul[0], ul[1]))
+        rectangle_sides.append('{},{}'.format(ur[0], ul[1]))
+        rectangle_sides.append('{},{}'.format(lr[0], lr[1]))
+        rectangle_sides.append('{},{}'.format(ll[0], ll[1]))
+        rectangle_sides.append('{},{}'.format(ul[0], ul[1])) 
+        return rectangle_sides
     
 class SensorGrid(InkstitchExtension):
     COMMANDS = ["grid"]
@@ -280,13 +260,6 @@ class SensorGrid(InkstitchExtension):
         InkstitchExtension.__init__(self, *args, **kwargs)
         for command in self.COMMANDS:
             self.arg_parser.add_argument("--%s" % command, type=inkex.Boolean)
-        # self.arg_parser.add_argument("--horizontal_wires")
-        # self.arg_parser.add_argument("--vertical_wires")
-        # self.num_horizontal_wires = self.options.horizontal_wires
-        # self.num_vertical_wires = self.options.vertical_wires
-        # inkex.errormsg("params:{}, {}".format(self.num_horizontal_wires, self.num_vertical_wires))
-
-
     def cancel(self):
         self.cancelled = True
     def effect(self):
@@ -299,47 +272,22 @@ class SensorGrid(InkstitchExtension):
         # TODO: do conversion for later version??
         rectangle = None
 
-        for elem in self.svg.get_selected():
+        for elem in self.svg.get_selected(): # PATH ELEMENT
+            '''
+            need this for loop for when multiple elements are selected (object , 2 connectors[?])
+            for now it is just the object itself
+            '''
             if not isinstance(elem, Rectangle):
-                inkex.errormsg("type of elem:{}, path:{}, style:{}".format(type(elem), elem.get_path(), elem.style))
-                inkex.errormsg(_("Please select a rectangle"))
+                # inkex.errormsg("type of elem:{}, path:{}, style:{}".format(type(elem), elem.get_path(), elem.style))
+                # inkex.errormsg(_("Please select a rectangle"))
+                bbox = self.svg.get_selected_bbox()
+                self.parse_poly_points(elem, bbox)
+                # inkex.errormsg("bbox:{},{}".format(bbox, type(bbox)))
                 return
             inkex.errormsg("top {}, bottom {}, left {}, right {}".format(elem.top, elem.bottom, elem.left, elem.right))
             inkex.errormsg("path {}".format(elem.path))
-            rectangle = RectangleMetadata(elem.width, elem.height, elem.top, elem.bottom, elem.left, elem.right)
-            # try to draw line from here?
-            # parent = elem.getparent()
-            # inkex.errormsg("what is parent:{} --> {}".format(parent, type(parent)))
-            # def draw_SVG_line(x1, y1, x2, y2):
-            #     # line_style   = { 'stroke': 'dashed',
-            #     #                 'stroke-width':str(5),
-            #     #                 'fill': 'none'
-            #     #             }
 
-            #     # line_attribs = {'style' : line_style,
-            #     #                 inkex.addNS('label','inkscape') : name,
-            #     node = inkex.Rectangle()
-            #     d = "path M 50.18 26.5094 h 10.16 v 11.5906 h -10.16 z"
-            #     node.set("d", d)
-            #     dasharray = inkex.Style("stroke-dasharray:0.5,0.5;")
-            #     node.set("style","stroke-dasharray:0.5,0.5;")
-            #     inkex.errormsg("NODE PATH:{}".format(node.get_path()))
-            #     return node
-            # node = draw_SVG_line(elem.left + 1, elem.top, elem.left + 1, elem.bottom)
-            # elem = inkex.etree.SubElement(parent, node)
-            # self.get_current_layer().append(elem)
-            # path = inkex.PathElement(attrib={
-            # 'id': "HERE",
-            # 'style': "stroke: %s; stroke-width: 0.4; fill: none;" % "red",
-            # 'd': "m 0,86.039999 h 30.48 l 45.719999,22.86 ",
-            # # 'transform': inkex.get_correction_transform(svg),
-            # })
-            # self.svg.get_current_layer().append(path)
-            # for elem in self.svg.get_selected():
-            #     elem.style['fill'] = 'green'
-            #     elem.style["stroke"] = 'dashed'
-
-            
+            rectangle = BoundingBoxMetadata(elem.width, elem.height, elem.top, elem.bottom, elem.left, elem.right)
             
 
         app = wx.App()
@@ -360,19 +308,44 @@ class SensorGrid(InkstitchExtension):
             # may have modified the DOM.
             sys.exit(0)
 
-    def path_style(self, element):
-        color = element.style('stroke', '#000000')
-        return "stroke:%s;stroke-width:1px;fill:none" % (color)
-'''
+    def parse_poly_points(self, shapeElement, bbox):
+        '''
+        Gets point information about an arbitrary 2D shape
 
+        '''
+        '''
+         path:m 317.78536,934.4352 c -0.67685,-1.25744 -1.67024,-2.34352 -2.78632,-3.25714 -1.25632,-1.02842 -2.66812,-1.83832 -4.15539,-2.45201 -1.78985,-0.73855 -3.68901,-1.19293 -5.59631,-1.54834 -1.81005,-0.33729 -3.62744,-0.58546 -5.45846,-0.75544 -2.89029,-0.26831 -5.81456,-0.3418 -8.69802,-0.0783 -3.90247,0.35659 -7.73021,1.33038 -11.55644,2.24417 -1.97806,0.4724 -3.95572,0.92877 -5.92383,1.3954 -2.44397,0.57946 -4.87322,1.17475 -7.37128,1.66696 -2.2786,0.44898 -4.61444,0.81219 -6.87236,0.53902 -2.51982,-0.30485 -4.9426,-1.40227 -7.39733,-2.11244 -2.72794,-0.7892 -5.49534,-1.10014 -8.40369,-1.57114 -2.85905,-0.46302 -5.85431,-1.08072 -8.4021,-0.19688 -4.01143,1.3916 -6.9136,6.50551 -7.00068,11.22902 -0.0536,2.90687 0.95896,5.66588 2.81869,7.63997 1.13362,1.20333 2.58202,2.11502 4.10168,2.79571 3.37999,1.514 7.11249,1.88533 10.77209,2.4194 2.45185,0.35782 4.87097,0.78869 7.29639,1.21498 2.7619,0.48544 5.53197,0.96494 8.29565,1.4592 2.61337,0.46738 5.22101,0.94795 7.82848,1.46784 3.24613,0.64723 6.49199,1.35537 9.77656,1.65601 3.44322,0.31517 6.92899,0.1825 10.39475,-0.0256 4.59811,-0.27614 9.16098,-0.68514 13.64707,-1.98754 4.72529,-1.37185 9.36539,-3.73493 12.42144,-7.53161 1.79698,-2.23246 3.04628,-4.96059 3.35586,-7.85478 0.23373,-2.18499 -0.0682,-4.46463 -1.08645,-6.3564
+         z, style:fill:none;stroke:#000000;stroke-width:0.9;stroke-linecap:rou
 
-top 26.509441, bottom 38.099998, left 43.18, right 53.34
-path M 43.18 26.5094 h 10.16 v 11.5906 h -10.16 z
-dims in GUI: 10.16 x 11.590557
+        m dx dy (starting point)
+        c dx1 dy1, dx2 dy2, dx dy (slope @ beginning, slope @ end, ending point of line)
 
-'''
+        only care about point right after m and every THIRD point after c?
+        '''
+        points = [p for p in shapeElement.path.end_points]
+        parsed = Path.parse_string(shapeElement.get_path())
+        inkex.errormsg("parsed segs:{}".format(parsed))
+        segs = []
+        for p in points:
+            segs.append('{},{}'.format(p.x, p.y)) # this gives me the points!
+        self.create_path(segs)
+        rect = BoundingBoxMetadata(bbox.width, bbox.height, bbox.top, bbox.bottom, bbox.left, bbox.right)
+        corners = rect.get_rectangle_path()
+        self.create_path(corners)
 
-
+    def create_path(self, points):
+        '''
+        Creates a wire segment path given all of the points sequentially
+        '''
+        # color = "red" if is_horizontal else "blue"
+        path_str = ' '.join(points)
+        path = inkex.Polyline(attrib={
+        'id': "wire_segment",
+        'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % "red",
+        'points': path_str,
+        # 'transform': inkex.get_correction_transform(svg),
+        })
+        self.svg.get_current_layer().append(path)
 
 if __name__ == '__main__':
     inkex.errormsg(sys.argv[1:])
@@ -383,3 +356,40 @@ if __name__ == '__main__':
     args, _ = parser.parse_known_args()
     inkex.errormsg("args:{}".format(args))
     SensorGrid(args.horizontal_wires, args.vertical_wires).run()
+
+
+
+
+'''
+Code Archive
+
+Clean this up later when something works
+'''
+
+   # OLD DISJOINT CODE -- will save just in case it is needed for routing???
+    # def create_wire_segment(self, start_point, length, is_horizontal):
+    #     color = "red" if is_horizontal else "blue"
+    #     direction = "h" if is_horizontal else "v"
+    #     # length = self.rectangle.width if is_horizontal else self.rectangle.height
+    #     path = inkex.PathElement(attrib={
+    #     'id': "wire_segment",
+    #     'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
+    #     'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
+    #     # 'transform': inkex.get_correction_transform(svg),
+    #     })
+    #     self.svg.get_current_layer().append(path)
+    
+    
+    # def create_wire_joiner(self, start_point, length, is_horizontal):
+    #     '''
+    #     joins two wires going in the same direction for continuous sowing
+    #     '''
+    #     color = "blue" if is_horizontal else "red"
+    #     direction = "h" if is_horizontal else "v"
+    #     path = inkex.PathElement(attrib={
+    #     'id': "wire_segment",
+    #     'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
+    #     'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
+    #     # 'transform': inkex.get_correction_transform(svg),
+    #     })
+    #     self.svg.get_current_layer().append(path)
