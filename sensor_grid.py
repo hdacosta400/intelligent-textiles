@@ -25,20 +25,22 @@ from .lettering_custom_font_dir import get_custom_font_dir
 
 import svgwrite
 from svgwrite.extensions import Inkscape
+import numpy as np
 
 # minimum space apart for wires in grid to avoid interference / shorting
 MIN_GRID_SPACING = 2.5
+BBOX_SPACING = 5
 class SensorGridFrame(wx.Frame):
     DEFAULT_FONT = "small_font"
-    def __init__(self, rectangle, svg, *args, **kwargs):
+    def __init__(self, shape_points, rectangle, wire_connector, svg, *args, **kwargs):
         if sys.platform.startswith('win32'):
             import locale
             locale.setlocale(locale.LC_ALL, "C")
             lc = wx.Locale()
             lc.Init(wx.LANGUAGE_DEFAULT)  
-        # self.group = kwargs.pop('group')
-        # self.parent_node = parent_node
+        self.shape_points = shape_points
         self.rectangle = rectangle
+        self.vertical_wire_connector, self.horizontal_wire_connector = wire_connector
         self.upper_left, self.upper_right, self.lower_left, self.lower_right = self.rectangle.get_rectangle_points()
         self.svg = svg
         self.paths = []
@@ -122,48 +124,49 @@ class SensorGridFrame(wx.Frame):
 
          4 curr_point_top: 38.09999799999999, bottom: 38.099998
         '''
-        curr_point = list(self.upper_left)
-        inkex.errormsg("vert spacing:{}, curr_point_top: {}, bottom: {}".format(horizontal_wire_spacing, curr_point[1], self.rectangle.bottom))
+        curr_point = list(self.lower_left)
         wire_count = 0
         points = []
-        while round(curr_point[1]) != round(self.rectangle.bottom - horizontal_wire_spacing):
-            curr_point[1] += horizontal_wire_spacing
-            inkex.errormsg(" 1 curr_point_top: {}, bottom: {}".format(curr_point[1], self.rectangle.bottom))
+        while round(curr_point[1]) != round(self.rectangle.top + horizontal_wire_spacing):
+            curr_point[1] -= horizontal_wire_spacing
+            connections = []
+            if self.horizontal_wire_connector.has_available_wires():
+                connections = self.horizontal_wire_connector.connect_wire()
+            if wire_count % 2 == 0:
             # self.create_wire_segment(curr_point, self.rectangle.width, True)
-            points.append('{},{}'.format(curr_point[0], curr_point[1]))
+                points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
+                points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
+                for p in connections:
+                    points.append('{},{}'.format(p.x, p.y))
+            else:
+                points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
+                points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
+
             wire_count += 1
-            if wire_count < self.horizontal_wire_spinner.GetValue(): # avoid last wire to prevent shorting
-                if wire_count % 2 == 1: # need to draw joining segment on right side
-                    # self.create_wire_joiner([self.rectangle.right, curr_point[1]], horizontal_wire_spacing, is_horizontal=False)
-                    points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
-                    points.append('{},{}'.format(self.rectangle.right, curr_point[1] + horizontal_wire_spacing))
-                else: # need to draw joining segment on left side
-                    # self.create_wire_joiner([self.rectangle.left, curr_point[1]], horizontal_wire_spacing, is_horizontal=False)
-                    points.append('{},{}'.format(self.rectangle.left, curr_point[1]))
-                    points.append('{},{}'.format(self.rectangle.left, curr_point[1] + horizontal_wire_spacing))
-        inkex.errormsg("horizontal points:{}".format(points))
+
         self.create_path(points, is_horizontal=True)
 
     def lay_vertical_wires(self, vertical_wire_spacing):
         curr_point = list(self.upper_left)
-        inkex.errormsg("vert spacing:{}, curr_point_top: {}, bottom: {}".format(vertical_wire_spacing, curr_point[1], self.rectangle.right))
         wire_count = 0
         points = []
         while round(curr_point[0]) != round(self.rectangle.right - vertical_wire_spacing):
             curr_point[0] += vertical_wire_spacing
-            points.append('{},{}'.format(curr_point[0], curr_point[1]))
-            inkex.errormsg(" 1 curr_point_top: {}, bottom: {}".format(curr_point[0], self.rectangle.right))
-            # self.create_wire_segment(curr_point, self.rectangle.height, False)
+            connections = []
+            if self.vertical_wire_connector.has_available_wires():
+                connections = self.vertical_wire_connector.connect_wire()
+            if wire_count % 2 == 0:
+                points.append('{},{}'.format(curr_point[0], self.rectangle.top - BBOX_SPACING))
+                points.append('{},{}'.format(curr_point[0], self.rectangle.bottom))
+                for p in connections:
+                    points.append('{},{}'.format(p.x, p.y))
+            else:
+                points.append('{},{}'.format(curr_point[0], self.rectangle.bottom))
+                points.append('{},{}'.format(curr_point[0], self.rectangle.top - BBOX_SPACING))
+            
             wire_count += 1
-            if wire_count < self.vertical_wire_spinner.GetValue():
-                if wire_count % 2 == 1: # need to draw joining segment on bottom side
-                    # self.create_wire_joiner([curr_point[0], self.rectangle.bottom], vertical_wire_spacing, is_horizontal=True)
-                    points.append('{},{}'.format(curr_point[0], self.rectangle.bottom))
-                    points.append('{},{}'.format(curr_point[0] + vertical_wire_spacing, self.rectangle.bottom))
-                else: # need to draw joining segment on top side
-                    # self.create_wire_joiner([curr_point[0], self.rectangle.top], vertical_wire_spacing, is_horizontal=True)
-                    points.append('{},{}'.format(curr_point[0], self.rectangle.top))
-                    points.append('{},{}'.format(curr_point[0] + vertical_wire_spacing, self.rectangle.top))
+
+        
         inkex.errormsg("vertical points:{}".format(points))
         self.create_path(points, is_horizontal=False)
 
@@ -228,6 +231,12 @@ class BoundingBoxMetadata():
         self.bottom = bottom
         self.left = left
         self.right = right
+
+
+        # [(228.1611254982255, 926.1796798412221),
+        # (318.94651979684267, 926.1796798412221),
+        # (228.1611254982255, 958.3789548850492), 
+        # (318.94651979684267, 958.3789548850492)]
     
     def get_rectangle_points(self):
         '''
@@ -252,7 +261,35 @@ class BoundingBoxMetadata():
         rectangle_sides.append('{},{}'.format(ll[0], ll[1]))
         rectangle_sides.append('{},{}'.format(ul[0], ul[1])) 
         return rectangle_sides
-    
+
+class Connector():
+    '''
+    Object to represent connector of wires
+
+    IF:
+    x a b c d
+    ^
+    every connector has 32 connection points
+    I can split a list of 64 in HALF for vertical and horizontal
+    Impose constraint where first half is always for vert and second is always for horz
+    '''
+    def __init__(self, connector_points):
+        self.connector_points = connector_points # all coords where wires need to route to 
+        self.open_wire_idx = 0 # idx of next available wire
+        inkex.errormsg("num connectors:{}".format(len(self.connector_points)))
+    def has_available_wires(self):
+        return self.open_wire_idx <= len(self.connector_points) - 4 # every connector is 4 points
+    def connect_wire(self):
+        if self.has_available_wires():
+            points = self.connector_points[self.open_wire_idx:self.open_wire_idx + 4]
+            self.open_wire_idx += 2
+            return points
+        else:
+            inkex.errormsg("connector has no more open connections. Decrease the number of wires!")
+            return None
+
+
+
 class SensorGrid(InkstitchExtension):
     COMMANDS = ["grid"]
     def __init__(self, *args, **kwargs):
@@ -264,51 +301,66 @@ class SensorGrid(InkstitchExtension):
         self.cancelled = True
     def effect(self):
 
-        # if not self.svg.selected:
-        #     inkex.errormsg(_("Please select a single rectangle to apply a grid."))
-        #     return
-
-        # get dims of user's grid in MM (for now, have users select mm as measurement)
-        # TODO: do conversion for later version??
         rectangle = None
-
+        shape_points = None
+        connector_points = []
+        connectors = [] # list of connector objects
         for elem in self.svg.get_selected(): # PATH ELEMENT
             '''
             need this for loop for when multiple elements are selected (object , 2 connectors[?])
             for now it is just the object itself
             '''
-            if not isinstance(elem, Rectangle):
-                # inkex.errormsg("type of elem:{}, path:{}, style:{}".format(type(elem), elem.get_path(), elem.style))
-                # inkex.errormsg(_("Please select a rectangle"))
-                bbox = self.svg.get_selected_bbox()
-                self.parse_poly_points(elem, bbox)
-                # inkex.errormsg("bbox:{},{}".format(bbox, type(bbox)))
-                return
-            inkex.errormsg("top {}, bottom {}, left {}, right {}".format(elem.top, elem.bottom, elem.left, elem.right))
-            inkex.errormsg("path {}".format(elem.path))
-
-            rectangle = BoundingBoxMetadata(elem.width, elem.height, elem.top, elem.bottom, elem.left, elem.right)
+            inkex.errormsg("things selected:{}".format(len(self.svg.get_selected())))
+            inkex.errormsg("type of elem:{}".format(type(elem)))
+            shape_points = [p for p in elem.path.end_points]
+            inkex.errormsg("points:{},{}".format(shape_points,len(shape_points)))
             
 
-        app = wx.App()
-        frame = SensorGridFrame(rectangle, self.svg, on_cancel=self.cancel)
+            if len(shape_points) > 4 and rectangle is None: # use bounding box of OBJECT 
+                #for now, this will differentiate the OBJECT from the CONNECTORS
+                bbox = elem.bounding_box()
+                self.parse_poly_points(shape_points, bbox)
+                rectangle = BoundingBoxMetadata(bbox.width, bbox.height, bbox.top, bbox.bottom, bbox.left, bbox.right)
+                inkex.errormsg("rect points:{}".format(rectangle.get_rectangle_points()))
+                '''
+                rect points:[(228.1611254982255, 926.1796798412221),
+                 (318.94651979684267, 926.1796798412221),
+                  (228.1611254982255, 958.3789548850492), 
+                  (318.94651979684267, 958.3789548850492)]
+                '''
+            elif len(shape_points) == 4:
+                # first and last points represent the ends that will be used for routing!
+                for p in shape_points:
+                    connector_points.append(p)
+                if len(connector_points) == 64: # num of points making up a connector
+                    connectors.append(Connector(connector_points))
+                    connector_points = []
+                
 
-        # position left, center
-        current_screen = wx.Display.GetFromPoint(wx.GetMousePosition())
-        display = wx.Display(current_screen)
-        display_size = display.GetClientArea()
-        frame_size = frame.GetSize()
-        frame.SetPosition((int(display_size[0]), int(display_size[3] / 2 - frame_size[1] / 2)))
+        # if shape_points is not None and rectangle is not None and len(connectors) > 0:
+        if True:
+            app = wx.App()
+            frame = SensorGridFrame(shape_points, rectangle, connectors, self.svg, on_cancel=self.cancel)
 
-        frame.Show()
-        app.MainLoop()
+            # position left, center
+            current_screen = wx.Display.GetFromPoint(wx.GetMousePosition())
+            display = wx.Display(current_screen)
+            display_size = display.GetClientArea()
+            frame_size = frame.GetSize()
+            frame.SetPosition((int(display_size[0]), int(display_size[3] / 2 - frame_size[1] / 2)))
 
-        if self.cancelled:
-            # This prevents the superclass from outputting the SVG, because we
-            # may have modified the DOM.
-            sys.exit(0)
+            frame.Show()
+            app.MainLoop()
 
-    def parse_poly_points(self, shapeElement, bbox):
+            if self.cancelled:
+                # This prevents the superclass from outputting the SVG, because we
+                # may have modified the DOM.
+                sys.exit(0)
+        else:
+            inkex.errormsg("Please make sure the shape and its connectors are selected!")
+            return
+
+    def parse_poly_points(self, points, bbox):
         '''
         Gets point information about an arbitrary 2D shape
 
@@ -322,18 +374,14 @@ class SensorGrid(InkstitchExtension):
 
         only care about point right after m and every THIRD point after c?
         '''
-        points = [p for p in shapeElement.path.end_points]
-        parsed = Path.parse_string(shapeElement.get_path())
-        inkex.errormsg("parsed segs:{}".format(parsed))
-        segs = []
+        # points = [p for p in shapeElement.path.end_points]
+        path = []
         for p in points:
-            segs.append('{},{}'.format(p.x, p.y)) # this gives me the points!
-        self.create_path(segs)
+            path.append('{},{}'.format(p.x, p.y)) # this gives me the points!
         rect = BoundingBoxMetadata(bbox.width, bbox.height, bbox.top, bbox.bottom, bbox.left, bbox.right)
         corners = rect.get_rectangle_path()
-        self.create_path(corners)
 
-    def create_path(self, points):
+    def create_path(self, points, color):
         '''
         Creates a wire segment path given all of the points sequentially
         '''
@@ -341,7 +389,7 @@ class SensorGrid(InkstitchExtension):
         path_str = ' '.join(points)
         path = inkex.Polyline(attrib={
         'id': "wire_segment",
-        'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % "red",
+        'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
         'points': path_str,
         # 'transform': inkex.get_correction_transform(svg),
         })
