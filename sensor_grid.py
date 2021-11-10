@@ -119,11 +119,6 @@ class SensorGridFrame(wx.Frame):
         self.lay_vertical_wires(total_vertical_spacing)
 
     def lay_horizontal_wires(self, horizontal_wire_spacing):
-        '''
-        vert spacing:2.9, curr_point_top: 26.509441, bottom: 38.099998
-
-         4 curr_point_top: 38.09999799999999, bottom: 38.099998
-        '''
         curr_point = list(self.lower_left)
         wire_count = 0
         points = []
@@ -133,7 +128,6 @@ class SensorGridFrame(wx.Frame):
             if self.horizontal_wire_connector.has_available_wires():
                 connections = self.horizontal_wire_connector.connect_wire()
             if wire_count % 2 == 0:
-            # self.create_wire_segment(curr_point, self.rectangle.width, True)
                 points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
                 points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
                 for p in connections:
@@ -231,12 +225,6 @@ class BoundingBoxMetadata():
         self.bottom = bottom
         self.left = left
         self.right = right
-
-
-        # [(228.1611254982255, 926.1796798412221),
-        # (318.94651979684267, 926.1796798412221),
-        # (228.1611254982255, 958.3789548850492), 
-        # (318.94651979684267, 958.3789548850492)]
     
     def get_rectangle_points(self):
         '''
@@ -248,30 +236,11 @@ class BoundingBoxMetadata():
             (self.right, self.top),
             (self.left, self.bottom),
             (self.right, self.bottom)
-        ]
-    def get_rectangle_path(self):
-        '''
-        get polyline path to draw rectangle
-        '''
-        ul, ur, ll, lr = self.get_rectangle_points()
-        rectangle_sides = []
-        rectangle_sides.append('{},{}'.format(ul[0], ul[1]))
-        rectangle_sides.append('{},{}'.format(ur[0], ul[1]))
-        rectangle_sides.append('{},{}'.format(lr[0], lr[1]))
-        rectangle_sides.append('{},{}'.format(ll[0], ll[1]))
-        rectangle_sides.append('{},{}'.format(ul[0], ul[1])) 
-        return rectangle_sides
+            ]
 
 class Connector():
     '''
     Object to represent connector of wires
-
-    IF:
-    x a b c d
-    ^
-    every connector has 32 connection points
-    I can split a list of 64 in HALF for vertical and horizontal
-    Impose constraint where first half is always for vert and second is always for horz
     '''
     def __init__(self, connector_points):
         self.connector_points = connector_points # all coords where wires need to route to 
@@ -319,15 +288,8 @@ class SensorGrid(InkstitchExtension):
             if len(shape_points) > 4 and rectangle is None: # use bounding box of OBJECT 
                 #for now, this will differentiate the OBJECT from the CONNECTORS
                 bbox = elem.bounding_box()
-                self.parse_poly_points(shape_points, bbox)
                 rectangle = BoundingBoxMetadata(bbox.width, bbox.height, bbox.top, bbox.bottom, bbox.left, bbox.right)
                 inkex.errormsg("rect points:{}".format(rectangle.get_rectangle_points()))
-                '''
-                rect points:[(228.1611254982255, 926.1796798412221),
-                 (318.94651979684267, 926.1796798412221),
-                  (228.1611254982255, 958.3789548850492), 
-                  (318.94651979684267, 958.3789548850492)]
-                '''
             elif len(shape_points) == 4:
                 # first and last points represent the ends that will be used for routing!
                 for p in shape_points:
@@ -360,41 +322,6 @@ class SensorGrid(InkstitchExtension):
             inkex.errormsg("Please make sure the shape and its connectors are selected!")
             return
 
-    def parse_poly_points(self, points, bbox):
-        '''
-        Gets point information about an arbitrary 2D shape
-
-        '''
-        '''
-         path:m 317.78536,934.4352 c -0.67685,-1.25744 -1.67024,-2.34352 -2.78632,-3.25714 -1.25632,-1.02842 -2.66812,-1.83832 -4.15539,-2.45201 -1.78985,-0.73855 -3.68901,-1.19293 -5.59631,-1.54834 -1.81005,-0.33729 -3.62744,-0.58546 -5.45846,-0.75544 -2.89029,-0.26831 -5.81456,-0.3418 -8.69802,-0.0783 -3.90247,0.35659 -7.73021,1.33038 -11.55644,2.24417 -1.97806,0.4724 -3.95572,0.92877 -5.92383,1.3954 -2.44397,0.57946 -4.87322,1.17475 -7.37128,1.66696 -2.2786,0.44898 -4.61444,0.81219 -6.87236,0.53902 -2.51982,-0.30485 -4.9426,-1.40227 -7.39733,-2.11244 -2.72794,-0.7892 -5.49534,-1.10014 -8.40369,-1.57114 -2.85905,-0.46302 -5.85431,-1.08072 -8.4021,-0.19688 -4.01143,1.3916 -6.9136,6.50551 -7.00068,11.22902 -0.0536,2.90687 0.95896,5.66588 2.81869,7.63997 1.13362,1.20333 2.58202,2.11502 4.10168,2.79571 3.37999,1.514 7.11249,1.88533 10.77209,2.4194 2.45185,0.35782 4.87097,0.78869 7.29639,1.21498 2.7619,0.48544 5.53197,0.96494 8.29565,1.4592 2.61337,0.46738 5.22101,0.94795 7.82848,1.46784 3.24613,0.64723 6.49199,1.35537 9.77656,1.65601 3.44322,0.31517 6.92899,0.1825 10.39475,-0.0256 4.59811,-0.27614 9.16098,-0.68514 13.64707,-1.98754 4.72529,-1.37185 9.36539,-3.73493 12.42144,-7.53161 1.79698,-2.23246 3.04628,-4.96059 3.35586,-7.85478 0.23373,-2.18499 -0.0682,-4.46463 -1.08645,-6.3564
-         z, style:fill:none;stroke:#000000;stroke-width:0.9;stroke-linecap:rou
-
-        m dx dy (starting point)
-        c dx1 dy1, dx2 dy2, dx dy (slope @ beginning, slope @ end, ending point of line)
-
-        only care about point right after m and every THIRD point after c?
-        '''
-        # points = [p for p in shapeElement.path.end_points]
-        path = []
-        for p in points:
-            path.append('{},{}'.format(p.x, p.y)) # this gives me the points!
-        rect = BoundingBoxMetadata(bbox.width, bbox.height, bbox.top, bbox.bottom, bbox.left, bbox.right)
-        corners = rect.get_rectangle_path()
-
-    def create_path(self, points, color):
-        '''
-        Creates a wire segment path given all of the points sequentially
-        '''
-        # color = "red" if is_horizontal else "blue"
-        path_str = ' '.join(points)
-        path = inkex.Polyline(attrib={
-        'id': "wire_segment",
-        'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-        'points': path_str,
-        # 'transform': inkex.get_correction_transform(svg),
-        })
-        self.svg.get_current_layer().append(path)
-
 if __name__ == '__main__':
     inkex.errormsg(sys.argv[1:])
     parser = ArgumentParser()
@@ -404,40 +331,3 @@ if __name__ == '__main__':
     args, _ = parser.parse_known_args()
     inkex.errormsg("args:{}".format(args))
     SensorGrid(args.horizontal_wires, args.vertical_wires).run()
-
-
-
-
-'''
-Code Archive
-
-Clean this up later when something works
-'''
-
-   # OLD DISJOINT CODE -- will save just in case it is needed for routing???
-    # def create_wire_segment(self, start_point, length, is_horizontal):
-    #     color = "red" if is_horizontal else "blue"
-    #     direction = "h" if is_horizontal else "v"
-    #     # length = self.rectangle.width if is_horizontal else self.rectangle.height
-    #     path = inkex.PathElement(attrib={
-    #     'id': "wire_segment",
-    #     'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-    #     'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
-    #     # 'transform': inkex.get_correction_transform(svg),
-    #     })
-    #     self.svg.get_current_layer().append(path)
-    
-    
-    # def create_wire_joiner(self, start_point, length, is_horizontal):
-    #     '''
-    #     joins two wires going in the same direction for continuous sowing
-    #     '''
-    #     color = "blue" if is_horizontal else "red"
-    #     direction = "h" if is_horizontal else "v"
-    #     path = inkex.PathElement(attrib={
-    #     'id': "wire_segment",
-    #     'style': "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-    #     'd': "m {},{} {} {} ".format(str(start_point[0]), str(start_point[1]), direction, length),
-    #     # 'transform': inkex.get_correction_transform(svg),
-    #     })
-    #     self.svg.get_current_layer().append(path)
