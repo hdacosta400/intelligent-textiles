@@ -2,11 +2,13 @@
 <inkscape-extension translationdomain="inkstitch" xmlns="http://www.inkscape.org/namespace/inkscape/extension">
     <name>Create Grid</name>
     <id>org.inkstitch.create_grid</id>
+    <param name="extension" type="string" gui-hidden="true">create_grid</param>
     <effect implements-custom-gui="true">
         <object-type>all</object-type>
         <effects-menu>
-            <submenu name="Ink/Stitch" translatable="no" />
+            <submenu name="Ink/Stitch" translatable="no">
                 <submenu name="Sensor Grid Tools" />
+            </submenu>
         </effects-menu>
     </effect>
     <script>

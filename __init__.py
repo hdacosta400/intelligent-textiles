@@ -37,6 +37,7 @@ from .stitch_plan_preview import StitchPlanPreview
 from .zip import Zip
 from .sensor_grid import SensorGrid
 from .create_grid import CreateGrid
+from .combine_grids import CombineGrids
 __all__ = extensions = [StitchPlanPreview,
                         Install,
                         Params,
@@ -69,4 +70,5 @@ __all__ = extensions = [StitchPlanPreview,
                         DuplicateParams,
                         EmbroiderSettings,
                         SensorGrid,
-                        CreateGrid]
+                        CreateGrid,
+                        CombineGrids]
