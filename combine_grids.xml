@@ -11,6 +11,13 @@
             </submenu>
         </effects-menu>
     </effect>
+    <param name="description" type="description">
+        This extension will try to combine wires together.
+    </param>
+    <param name="alignment" type="optiongroup" gui-text="Method">
+       <option value="0">Vertical</option>
+       <option value="1">Horizontal</option>
+    </param>
     <script>
         {{ command_tag | safe }}
     </script>
