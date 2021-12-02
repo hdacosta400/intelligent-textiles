@@ -28,6 +28,71 @@ import numpy as np
 MIN_GRID_SPACING = 2.5
 BBOX_SPACING = 5
 
+class BoundingBoxMetadata():
+    '''
+    Storage class to hold important information about rectangle
+    '''
+    def __init__(self, width, height, top, bottom, left, right):
+        self.width = width
+        self.height = height
+        self.top = top
+        self.bottom = bottom
+        self.left = left
+        self.right = right
+
+        self.horizontal_wire_points = None
+        self.vertical_wire_points = None
+    
+    def get_rectangle_points(self):
+        '''
+        returns upper_left , upper_right, lower_left, lower_right points as list of tuples 
+        in that order
+        '''
+        return [
+            (self.left, self.top),
+            (self.right, self.top),
+            (self.left, self.bottom),
+            (self.right, self.bottom)
+            ]
+    def is_horizontally_aligned(self, other):
+        '''
+        Verifies whether or not two bounding boxes can be
+        connected horizontally
+
+        Essentially other cannot be directly under this bbox with some buffer
+        '''
+        return abs(self.left - other.left) >= self.width
+
+    def is_vertically_aligned(self, other):
+        '''
+        Verifies whether or not two bounding boxes can be
+        connected vertically 
+
+        Essentially other cannot be directly next to this bbox with some buffer
+        '''
+        return abs(self.top - other.top) >= self.height
+    
+    def add_wire(self, wire_points):
+        '''
+        If wire is contained in BBOX, adds it to object
+        '''
+        # wire will always go to left - BBOX_SPACING and top - BBOX_SPACING
+        x_coord = self.left - BBOX_SPACING
+        y_coord = self.top - BBOX_SPACING
+        for point in wire_points:
+            if x_coord == point.x:
+                self.horizontal_wire_points = wire_points
+            elif y_coord == point.y:
+                self.vertical_wire_points = wire_points
+    
+    def get_wire_points(self, is_horizontal):
+        return self.horizontal_wire_points if is_horizontal else self.vertical_wire_points
+    
+    def wires_grouped(self):
+        inkex.errormsg("yuo yo")
+        inkex.errormsg("horiz_points:{}".format(self.horizontal_wire_points))
+        inkex.errormsg("vertical_points:{}".format(self.vertical_wire_points))
+        return self.horizontal_wire_points is not None and self.vertical_wire_points is not None
 
 class CreateGridFrame(wx.Frame):
     DEFAULT_FONT = "small_font"
@@ -202,32 +267,6 @@ class CreateGridFrame(wx.Frame):
         size.height = size.height + 200
         self.SetSize(size)
 
-class BoundingBoxMetadata():
-    '''
-    Storage class to hold important information about rectangle
-    '''
-    def __init__(self, width, height, top, bottom, left, right):
-        self.width = width
-        self.height = height
-        self.top = top
-        self.bottom = bottom
-        self.left = left
-        self.right = right
-    
-    def get_rectangle_points(self):
-        '''
-        returns upper_left , upper_right, lower_left, lower_right points as list of tuples 
-        in that order
-        '''
-        return [
-            (self.left, self.top),
-            (self.right, self.top),
-            (self.left, self.bottom),
-            (self.right, self.bottom)
-            ]
-
-
-
 
 class CreateGrid(InkstitchExtension):
     COMMANDS = ["create_grid"]
@@ -236,6 +275,15 @@ class CreateGrid(InkstitchExtension):
         InkstitchExtension.__init__(self, *args, **kwargs)
         for command in self.COMMANDS:
             self.arg_parser.add_argument("--%s" % command, type=inkex.Boolean)
+        self.arg_parser.add_argument("--horizontal_wires")
+        self.arg_parser.add_argument("--vertical_wires")
+        self.arg_parser.add_argument('args', nargs=REMAINDER)
+        args, _ = self.arg_parser.parse_known_args()
+        inkex.errormsg("args:{}".format(args))
+
+    def cancel(self):
+        self.cancelled = True
+    
     def effect(self):
 
         rectangle = None
@@ -274,12 +322,12 @@ class CreateGrid(InkstitchExtension):
         
 
 
-if __name__ == '__main__':
-    inkex.errormsg(sys.argv[1:])
-    parser = ArgumentParser()
-    parser.add_argument("--horizontal_wires")
-    parser.add_argument("--vertical_wires")
-    parser.add_argument('args', nargs=REMAINDER)
-    args, _ = parser.parse_known_args()
-    inkex.errormsg("args:{}".format(args))
-    CreateGrid(args.horizontal_wires, args.vertical_wires).run()
+# if __name__ == '__main__':
+#     inkex.errormsg(sys.argv[1:])
+#     parser = ArgumentParser()
+#     parser.add_argument("--horizontal_wires")
+#     parser.add_argument("--vertical_wires")
+#     parser.add_argument('args', nargs=REMAINDER)
+#     args, _ = parser.parse_known_args()
+#     inkex.errormsg("args:{}".format(args))
+#     # CreateGrid(args.horizontal_wires, args.vertical_wires).run()
