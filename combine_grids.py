@@ -43,7 +43,6 @@ class Connector():
             return None
 
 class CombineGrids(InkstitchExtension):
-    COMMANDS = ["combine_grids"]
     def __init__(self, *args, **kwargs):
         self.cancelled = False
         InkstitchExtension.__init__(self, *args, **kwargs)
@@ -52,7 +51,6 @@ class CombineGrids(InkstitchExtension):
         self.is_horizontal_connection = True if args.alignment == "1" else False
         inkex.errormsg(self.is_horizontal_connection)
         self.wires = []
-        # self.wire_rectangles = []
         self.connector = None
     def cancel(self):
         self.cancelled = True
@@ -73,30 +71,14 @@ class CombineGrids(InkstitchExtension):
         return True
 
     def connect_horizontally(self):
-        # V1 implementation without connectors present
-        # rect1, rect2 = self.wire_rectangles
-        # V2
         rect1,rect2 = self.wires[0].bbox, self.wires[1].bbox
-
         left_wire = None 
         right_wire = None
         if rect1.left < rect2.left:
-            left_wire = self.wires[0]
-            right_wire = self.wires[1]
+            left_wire, right_wire = self.wires
         else:
-            left_wire = self.wires[1]
-            right_wire = self.wires[0] 
-
-        # is there a need for this?
-        # valid_connection = self.check_horizontal_wire_directions(num_left_wires, num_right_wires)
-        # inkex.errormsg("num lr:{},{}".format(num_left_wires, num_right_wires))
-        # if not valid_connection:
-        # if not(num_left_wires == num_right_wires):
-            # min_wire_side = "left" if num_left_wires < num_right_wires else "right"
-            # inkex.errormsg("Please add or subtract a wire from the {} shape in order to ensure that \
-            #                 the wires can be connected properrly.".format(min_wire_side))
-            # return 
-
+            right_wire, left_wire = self.wires
+            
         self.union_wires(left_wire, right_wire, True)
 
 
@@ -134,9 +116,10 @@ class CombineGrids(InkstitchExtension):
             inkex.errormsg("min wire idx:{}".format(min_wire_idx))
 
         max_points = ['{},{}'.format(p.x,p.y) for p in max_wire_points[max_wire_idx: len(max_wire_points)]]
+        inkex.errormsg("idx of right wire: {}:{}".format(max_wire_idx,len(max_wire_points)))
         union_wire_points.extend(max_points)
         # done unionizing the wires
-        # remove old wires
+        # remove old wires (.wire is used to access the actual svg element within the object)
         min_wire.wire.getparent().remove(min_wire.wire)
         max_wire.wire.getparent().remove(max_wire.wire)
 
@@ -187,12 +170,14 @@ class CombineGrids(InkstitchExtension):
             return
         if self.is_horizontal_connection:
             self.connect_horizontally()
-    
+
 class Wire:
+    #TODO: move this into a util class
     def __init__(self, wire):
         self.wire = wire
         self.points = [p for p in self.wire.path.end_points]
         self.bbox = self.wire.bounding_box()
+
     def get_num_wire_joins(self, is_horizontal):
         '''
         Determines how many wires were horizontally joined together to create the current wire object
@@ -212,6 +197,16 @@ class Wire:
                 point_counter += 1
         # should never get here?
         return None
+    '''
+    Determine how many points of connection a wire has on each side (left right for horizontal case / top bottom for vertical case)
+    '''
+    def get_num_left_endpoints(self):
+        left_side = self.bbox.left
+        return sum([1 for p in self.points if p.x == left_side])
+
+    def get_num_right_endpoints(self):
+        right_side = self.bbox.right
+        return sum([1 for p in self.points if p.x == right_side])
 
 if __name__ == '__main__':
     inkex.errormsg(sys.argv[1:])

@@ -115,10 +115,10 @@ class CreateGridFrame(wx.Frame):
         self.preview = SimulatorPreview(self, target_duration=1)
         # self.presets_panel = PresetsPanel(self)
 
-        self.vertical_wire_spinner = wx.SpinCtrl(self, wx.ID_ANY, min = 1, initial = 1);
+        self.vertical_wire_spinner = wx.SpinCtrl(self, wx.ID_ANY, min = 0, initial = 1);
         self.vertical_wire_spinner.Bind(wx.EVT_SPINCTRL, lambda event: self.on_change("vertical_wires", event))
 
-        self.horizontal_wire_spinner = wx.SpinCtrl(self, wx.ID_ANY, min = 1, initial = 1);
+        self.horizontal_wire_spinner = wx.SpinCtrl(self, wx.ID_ANY, min = 0, initial = 1);
         self.horizontal_wire_spinner.Bind(wx.EVT_SPINCTRL, lambda event: self.on_change("horizontal_wires", event))
 
         self.horizontal_wire = None
@@ -163,23 +163,26 @@ class CreateGridFrame(wx.Frame):
 
     def create_grid_layout(self):
         # check vertical and horizontal spacing
-        total_horizontal_spacing = self.rectangle.height / (self.horizontal_wire_spinner.GetValue() + 1)
-        total_vertical_spacing = self.rectangle.width / (self.vertical_wire_spinner.GetValue() + 1)
-        # can only actually add wires within boundaries of rectangle
-        horizontal_wire_spacing = (self.rectangle.height - total_horizontal_spacing) / self.horizontal_wire_spinner.GetValue()
-        vertical_wire_spacing = (self.rectangle.width - total_vertical_spacing) / self.vertical_wire_spinner.GetValue()
-        if (horizontal_wire_spacing < MIN_GRID_SPACING):
-            inkex.errormsg('''The horizontal wires must be at least {} mm apart
-                            They are currently {} mm apart. Either decrease the
-                            number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, horizontal_wire_spacing))
-            return
-        if (vertical_wire_spacing < MIN_GRID_SPACING):
-            inkex.errormsg('''The vertical wires must be at least {} mm apart 
-                            They are currently {} mm apart. Either decrease the
-                            number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, vertical_wire_spacing))
-            return
-        self.lay_horizontal_wires(total_horizontal_spacing)
-        self.lay_vertical_wires(total_vertical_spacing)
+        if self.horizontal_wire_spinner.GetValue() != 0:
+            total_horizontal_spacing = self.rectangle.height / (self.horizontal_wire_spinner.GetValue() + 1)
+            horizontal_wire_spacing = (self.rectangle.height - total_horizontal_spacing) / self.horizontal_wire_spinner.GetValue()
+            
+            if (horizontal_wire_spacing < MIN_GRID_SPACING):
+                inkex.errormsg('''The horizontal wires must be at least {} mm apart
+                                They are currently {} mm apart. Either decrease the
+                                number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, horizontal_wire_spacing))
+                return
+            self.lay_horizontal_wires(total_horizontal_spacing)
+        if self.vertical_wire_spinner.GetValue() != 0:
+            total_vertical_spacing = self.rectangle.width / (self.vertical_wire_spinner.GetValue() + 1)
+            vertical_wire_spacing = (self.rectangle.width - total_vertical_spacing) / self.vertical_wire_spinner.GetValue()
+
+            if (vertical_wire_spacing < MIN_GRID_SPACING):
+                inkex.errormsg('''The vertical wires must be at least {} mm apart 
+                                They are currently {} mm apart. Either decrease the
+                                number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, vertical_wire_spacing))
+                return
+            self.lay_vertical_wires(total_vertical_spacing)
 
     def lay_horizontal_wires(self, horizontal_wire_spacing):
         curr_point = list(self.lower_left)
