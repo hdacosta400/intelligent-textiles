@@ -55,9 +55,6 @@ class CombineGrids(InkstitchExtension):
     def cancel(self):
         self.cancelled = True
     
-    def get_points(self, line):
-        # return [p for p in line.path.end_points]
-        return line.points
     
     def check_horizontal_wire_directions(self, num_left_wires, num_right_wires):
         '''
@@ -79,14 +76,25 @@ class CombineGrids(InkstitchExtension):
         else:
             right_wire, left_wire = self.wires
             
-        self.union_wires(left_wire, right_wire, True)
-
+        self.union_wires(left_wire, right_wire, is_horizontal=True)
+    
+    def connect_vertically(self):
+        rect1,rect2 = self.wires[0].bbox, self.wires[1].bbox
+        top_wire = None 
+        bottom_wire = None
+        if rect1.top < rect2.top:
+            top_wire, bottom_wire = self.wires
+        else:
+            bottom_wire, top_wire = self.wires
+            
+        self.union_wires(top_wire, bottom_wire, is_horizontal=False)
 
 
     def union_wires(self, min_wire, max_wire, is_horizontal):
-        min_wire_points = self.get_points(min_wire)
-        max_wire_points = self.get_points(max_wire)
+        min_wire_points = min_wire.points
+        max_wire_points = max_wire.points
 
+        # determine how many points we have to scan over, scales by factor of 2 for every wire that gets joined to one another
         min_multiplier = min_wire.get_num_wire_joins(is_horizontal)
         max_multiplier = max_wire.get_num_wire_joins(is_horizontal)
 
@@ -98,11 +106,9 @@ class CombineGrids(InkstitchExtension):
         union_wire_points = []
         union_wire_points.extend(min_points)
 
-        while min_wire_idx != len(min_wire_points): # leave hanging wire
-            # 4 points on max wire constitutes a wrap around from one wire path to the next
-            # this will not always be true as one may need to connect multiple shapes together in sets of two
+        while min_wire_idx != len(min_wire_points):
+            # 4 * multiplier points constitutes a wrap around from one wire path to the next
             max_wire_splice_length = min(4 * max_multiplier, len(max_wire_points) - max_wire_idx)
-            inkex.errormsg("max wire idx:{}".format(max_wire_idx))
             max_points = ['{},{}'.format(p.x,p.y) for p in max_wire_points[max_wire_idx: max_wire_idx + max_wire_splice_length]]
             union_wire_points.extend(max_points)
             max_wire_idx += max_wire_splice_length
@@ -124,7 +130,6 @@ class CombineGrids(InkstitchExtension):
         max_wire.wire.getparent().remove(max_wire.wire)
 
         # add new combined one
-        inkex.errormsg(union_wire_points)
         self.create_path(union_wire_points, is_horizontal)
 
     def create_path(self, points, is_horizontal):
@@ -170,6 +175,8 @@ class CombineGrids(InkstitchExtension):
             return
         if self.is_horizontal_connection:
             self.connect_horizontally()
+        else:
+            self.connect_vertically()
 
 class Wire:
     #TODO: move this into a util class
@@ -190,10 +197,8 @@ class Wire:
             p2 = self.points[i+1]
             inkex.errormsg("points:{},{}".format(p1,p2))
             if (is_horizontal and p1.x == p2.x) or (not is_horizontal and p1.y == p2.y):
-                inkex.errormsg("coming in here")
                 return point_counter // 2
             else:
-                inkex.errormsg("adding 1!")
                 point_counter += 1
         # should never get here?
         return None
@@ -209,7 +214,6 @@ class Wire:
         return sum([1 for p in self.points if p.x == right_side])
 
 if __name__ == '__main__':
-    inkex.errormsg(sys.argv[1:])
     parser = ArgumentParser()
     parser.add_argument("--horizontal_wires")
     parser.add_argument("--vertical_wires")
