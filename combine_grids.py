@@ -57,7 +57,6 @@ class CombineGrids(InkstitchExtension):
         self.arg_parser.add_argument("--alignment")
         args, _ = self.arg_parser.parse_known_args()
         self.is_horizontal_connection = True if args.alignment == "1" else False
-        inkex.errormsg(self.is_horizontal_connection)
         self.wires = []
         self.connector = None
     def cancel(self):
@@ -120,16 +119,13 @@ class CombineGrids(InkstitchExtension):
         pass
 
     def union_wires_to_connector(self, wires, is_horizontal):
-        inkex.errormsg("coming into union ")
         shape_arrangement = sorted(wires + [self.connector], key = lambda x: x.bbox.left)
         union_wire_points = []
         union_wire_sections = {} # map sections of unionized wire to each component wire multiplier
 
         flip = False # has any wire in union been flipped?
-        inkex.errormsg("len wires:{}".format(len(wires)))
         for i in range(len(wires)):
             wire = wires[i]
-            inkex.errormsg("num points:{}".format(len(wire.points)))
             points = None
             has_odd_wires = wire.get_num_endpoints() % 2 == 1
             points = wire.get_points() if not flip else wire.get_flipped_points(is_horizontal)
@@ -140,39 +136,49 @@ class CombineGrids(InkstitchExtension):
             formatted_points = ['{},{}'.format(p.x,p.y) for p in points]
             union_wire_points.extend(formatted_points)
             # map last index where current wire ends
-            union_wire_sections[len(union_wire_points)-1] = wire.get_num_wire_joins(is_horizontal)
+            union_wire_sections[len(union_wire_points)] = wire.get_num_wire_joins(is_horizontal)
             wire.wire.getparent().remove(wire.wire)
         
         # now we splice in connector to union wire
         connection_points = []
         wire_point_idx = 0
-
         def get_section_multiplier(current_index):
             for key in union_wire_sections.keys():
-                if current_index <= key:
-                    return union_wire_sections[key]
-            return None # should never get here
+                if current_index < key:
+                    return key, union_wire_sections[key]
+            return 0,0
         
+        inkex.errormsg("ALL POINTS: {}".format(len(union_wire_points)))
+        inkex.errormsg("SECTIONS: {}".format(union_wire_sections))
         while wire_point_idx < len(union_wire_points):
-            inkex.errormsg("curr idx:{}".format(wire_point_idx))
-            wire_multiplier = get_section_multiplier(wire_point_idx)
+            inkex.errormsg("************************************")
+            inkex.errormsg("CURRENT INDEX:{}".format(wire_point_idx))
+            max_idx, wire_multiplier = get_section_multiplier(wire_point_idx)
+            inkex.errormsg("END OF THIS WIRE:{}".format(max_idx))
             points = None
             splice_length = None
-            if wire_point_idx == 0: #starting wire line'
-                splice_length = 2 * wire_multiplier
+            if wire_point_idx == 0: #starting wire line
+                inkex.errormsg("\t-------STARTING WIRE------------")
+                connection_points.extend(union_wire_points[wire_point_idx : wire_point_idx + 2 * wire_multiplier])
+                wire_point_idx += 2 * wire_multiplier
             else:
-                splice_length = min(4 * wire_multiplier, len(union_wire_points) - wire_point_idx)
-            inkex.errormsg("sL:{}".format(splice_length))
-            connection_points.extend(union_wire_points[wire_point_idx : wire_point_idx + splice_length])
-            wire_point_idx += splice_length
+                inkex.errormsg("\t-------COMING FROM CONNECTOR TO WRAP------------")
+                mult = 2 * wire_multiplier # default is that wire wraps back around
+                next_idx = wire_point_idx + 2 * mult
+                inkex.errormsg("what is next idx:{} , {}".format(next_idx, max_idx))
+                if next_idx > max_idx:
+                    inkex.errormsg("wrapping intp next wire section")
+                    _, new_sect_multiplier = get_section_multiplier(next_idx)
+                    inkex.errormsg("MULT OF NEXT WIRE:{}".format(new_sect_multiplier))
+                    mult += new_sect_multiplier - 1
+                    inkex.errormsg("TOTAL POINTS TO JUMP:{}".format(mult * 2))
+                for _ in range(mult):
+                    connection_points.extend(union_wire_points[wire_point_idx : wire_point_idx + 2])
+                    wire_point_idx += 2
 
-            if wire_point_idx < len(union_wire_points):
-                # add connector points unless we're at last point
-                connector_pins = self.connector.connect_pins()
-                inkex.errormsg("adding connector pins:{}".format(connector_pins))
-                connector_points = ['{},{}'.format(p.x,p.y) for p in connector_pins]
-                connection_points.extend(connector_points)
-                inkex.errormsg("all points:{}".format(len(connection_points)))
+            connector_pins = self.connector.connect_pins()
+            connector_points = ['{},{}'.format(p.x,p.y) for p in connector_pins]
+            connection_points.extend(connector_points)
 
         # return union_wire_points # to debug wire unions
         return connection_points
@@ -205,7 +211,6 @@ class CombineGrids(InkstitchExtension):
         
         max_points = ['{},{}'.format(p.x,p.y) for p in max_wire_points[max_wire_idx: len(max_wire_points)]]
         union_wire_points.extend(max_points)
-        inkex.errormsg("returning from connecting func:{}".format(union_wire_points))
             
         return union_wire_points
 
@@ -223,7 +228,6 @@ class CombineGrids(InkstitchExtension):
         self.svg.get_current_layer().append(path)
 
     def effect(self):
-        inkex.errormsg("wtf")
         connector_pins = []
         connector_bbox = None
         for elem in self.svg.get_selected():
@@ -283,10 +287,6 @@ class Wire():
     def get_flipped_points(self, is_horizontal):
         multiplier = self.get_num_wire_joins(is_horizontal)        
         flipped_points = []
-        debug_dict = {}
-        for i in range(len(self.points)):
-            debug_dict[self.points[i]] = i
-        inkex.errormsg([i for i in range(len(self.points))])
         idx = 0
         while idx < len(self.points):
             sect1 = self.points[idx: idx + 2 * multiplier]
@@ -294,10 +294,6 @@ class Wire():
             flipped_points.extend(sect1[::-1])
             flipped_points.extend(sect2[::-1])
             idx += 4 * multiplier
-        arr = []
-        for p in flipped_points:
-            arr.append(debug_dict[p])
-        inkex.errormsg("flipped:{}".format(arr))
         return flipped_points
 
 
