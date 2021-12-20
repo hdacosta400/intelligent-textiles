@@ -48,6 +48,10 @@ class Connector():
 
     def get_points(self):
         return self.points[self.open_wire_idx:]
+
+    def reverse_pins(self):
+        self.points = self.points[::-1]
+    
     def get_num_wire_joins(self, is_horizontal=True):# overloaded method for wire connection
          return 1 
 
@@ -126,11 +130,15 @@ class CombineGrids(InkstitchExtension):
         shape_arrangement = None
         if is_horizontal:
             shape_arrangement = sorted(wires + [self.connector], key = lambda x: x.bbox.left)
+            inkex.errormsg([type(p) for p in shape_arrangement])
         else:
             shape_arrangement = sorted(wires + [self.connector], key = lambda x: x.bbox.top)
         
-        reversed_connection = self.connector != shape_arrangement[0]
-
+        reversed_connection = self.connector == shape_arrangement[0]
+        if reversed_connection:
+            _ = [wire.set_flipped_points(is_horizontal) for wire in wires]
+            self.connector.reverse_pins()
+        inkex.errormsg("is reversed:{}".format(reversed_connection))
         union_wire_points = []
         union_wire_sections = {} # map sections of unionized wire to each component wire multiplier
         
@@ -191,7 +199,17 @@ class CombineGrids(InkstitchExtension):
                 connection_points.extend(connector_points)
             else:
                 endpoints = wires[-1].get_num_endpoints(is_horizontal)
-                if (endpoints % 2 == 1 and not is_horizontal) or (endpoints % 2 == 0 and is_horizontal):
+                connect_last_wire = False
+                if endpoints % 2 == 1:
+                    if is_horizontal:
+                        connect_last_wire = True
+                    else:
+                        if reversed_connection:
+                            connect_last_wire = True
+                elif endpoints % 2 == 0:
+                    if reversed_connection:
+                        connect_last_wire
+                if connect_last_wire:
                     connector_pins = self.connector.connect_pins()
                     connector_points = ['{},{}'.format(p.x,p.y) for p in connector_pins]
                     connection_points.extend(connector_points)
@@ -305,6 +323,9 @@ class Wire():
                 wire_sum += 1   
         inkex.errormsg(self.points)
         return wire_sum
+    
+    def set_flipped_points(self, is_horizontal):
+        self.points = self.get_flipped_points(is_horizontal)
     
     
     def get_flipped_points(self, is_horizontal):
