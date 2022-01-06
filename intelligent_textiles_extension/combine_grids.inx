@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+    <name>Combine Grids</name>
+    <id>org.inkscape.effect.combine_grids</id>
+    <effect>
+        <effects-menu>
+            <submenu name="Sensor Grid Tools" />
+        </effects-menu>
+    </effect>
+    <param name="alignment" type="optiongroup" appearance="radio" gui-text="Method">
+       <option value="0">Vertical</option>
+       <option value="1">Horizontal</option>
+    </param>
+    <script>
+        <command location="inx" interpreter="python">combine_grids.py</command>
+     </script>
+</inkscape-extension>
