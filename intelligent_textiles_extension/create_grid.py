@@ -10,10 +10,8 @@ from inkex import Line, Rectangle, Path, Polyline
 import wx
 import wx.adv
 from lxml import etree
+import pyembroidery
 
-import numpy as np
-from extension import InkstitchExtension
-from simple_inkscape_scripting import *
 
 MIN_GRID_SPACING = inkex.units.convert_unit(2.5, "mm")
 BBOX_SPACING = inkex.units.convert_unit(5, 'mm')
@@ -76,8 +74,8 @@ class CreateGridEffect(inkex.Effect):
                                             inkex.units.convert_unit(bbox.left, 'mm'),
                                             inkex.units.convert_unit(bbox.right, 'mm'))
 
-        create_grid_worker = CreateGrid(shape_points, rectangle, int(args.horizontal_wires), int(args.vertical_wires), self.svg, self.document)
-        create_grid_worker.create_grid_layout()
+        create_grid_worker = CreateGridWorker(shape_points, rectangle, int(args.horizontal_wires), int(args.vertical_wires), self.svg, self.document)
+        create_grid_worker.run()
 
         # parent = self.svg.get_current_layer()
         # self.draw_SVG_line(10,10,0,0, parent)
@@ -105,24 +103,27 @@ class CreateGridEffect(inkex.Effect):
         line_attribs = {
                 'style' : "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
                 'd': str(poly.get_path())
-                # 'points': 'M 0,0 9,9 5,5'
-                }
+        }
         
         etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)   
 
         # polyline(points,style=style)
-class CreateGrid():
+class CreateGridWorker():
+
     def __init__(self, shape_points, rectangle, num_horizontal_wires, num_vertical_wires, svg, document):
         self.shape_points = shape_points
         self.rectangle = rectangle
         self.num_horizontal_wires = num_horizontal_wires
         self.num_vertical_wires = num_vertical_wires
         self.svg = svg
-        self.lower_left, self.lower_right,self.upper_left,self.upper_right = self.rectangle.get_rectangle_points()
+        self.upper_left, self.upper_right,self.lower_left,self.lower_right = self.rectangle.get_rectangle_points()
         self.document = document
 
-    def create_grid_layout(self):
+
+    def run(self):
         # check vertical and horizontal spacing
+        horizontal_wire = None
+        vertical_wire = None
         if self.num_horizontal_wires != 0:
             total_horizontal_spacing = self.rectangle.height / (self.num_horizontal_wires + 1)
             horizontal_wire_spacing = (self.rectangle.height - total_horizontal_spacing) / self.num_horizontal_wires
@@ -132,7 +133,7 @@ class CreateGrid():
                                 They are currently {} mm apart. Either decrease the
                                 number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, horizontal_wire_spacing))
                 return
-            self.lay_horizontal_wires(total_horizontal_spacing)
+            horizontal_wire = self.lay_horizontal_wires(total_horizontal_spacing)
         if self.num_vertical_wires != 0:
             total_vertical_spacing = self.rectangle.width / (self.num_vertical_wires + 1)
             vertical_wire_spacing = (self.rectangle.width - total_vertical_spacing) / self.num_vertical_wires
@@ -142,14 +143,19 @@ class CreateGrid():
                                 They are currently {} mm apart. Either decrease the
                                 number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, vertical_wire_spacing))
                 return
-            self.lay_vertical_wires(total_vertical_spacing)
+            vertical_wire = self.lay_vertical_wires(total_vertical_spacing)
+        
+
+        # dynamic stitching stuff!
+        stitch_worker = MakeStitchesWorker(horizontal_wire, vertical_wire)
+        stitch_worker.make_horizontal_stitches()
 
     def lay_horizontal_wires(self, horizontal_wire_spacing):
         curr_point = list(self.lower_left)
         wire_count = 0
         points = []
         while wire_count != self.num_horizontal_wires:
-            curr_point[1] += horizontal_wire_spacing
+            curr_point[1] -= horizontal_wire_spacing
             if wire_count % 2 == 0:
                 points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
                 points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
@@ -160,7 +166,7 @@ class CreateGrid():
                 points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
             wire_count += 1
         inkex.errormsg("RESULT:{}".format(points))
-        self.create_path(points, is_horizontal=True)
+        return self.create_path(points, is_horizontal=True)
 
     def lay_vertical_wires(self, vertical_wire_spacing):
         curr_point = list(self.upper_left)
@@ -176,10 +182,9 @@ class CreateGrid():
                 points.append('{},{}'.format(curr_point[0], self.rectangle.top - BBOX_SPACING))
             wire_count += 1
 
+        return self.create_path(points, is_horizontal=False)
 
-        
-        inkex.errormsg("vertical points:{}".format(points))
-        self.create_path(points, is_horizontal=False)
+    
 
     def create_path(self, points, is_horizontal):
         '''
@@ -203,23 +208,67 @@ class CreateGrid():
         }
         
         etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
+        return path
 
-        # etree.SubElement(parent, inkex.addNS('path','svg'), path_str)
+
+class MakeStitchesWorker():
+    def __init__(self, horizontal_wire, vertical_wire):
+        self.horizontal_wire_points = [p for p in horizontal_wire.get_path().end_points]
+        self.vertical_wire = [p for p in vertical_wire.get_path().end_points]
+        self.stitch_points = []
+    
+    def make_horizontal_stitches(self):
+        unique_x_values = set([p.x for p in self.vertical_wire])
+        inkex.errormsg("unique x's:{}".format(unique_x_values))
+        
+        pattern = pyembroidery.EmbPattern()
+        # add stitches at end points
+        # for p in self.horizontal_wire_points:
+        #     pattern.add_stitch_absolute(pyembroidery.STITCH, p.x, p.y)
+        
+        stitched = [False for _ in range(len(self.horizontal_wire_points))]
+        for i in range(0, len(self.horizontal_wire_points) - 1, 2):
+            p0 = self.horizontal_wire_points[i]
+            p1 = self.horizontal_wire_points[i+1]
+
+            if not stitched[i]:
+                pattern.add_stitch_absolute(pyembroidery.STITCH, p0.x, p0.y)
+                stitched[i] = True
+            if not stitched[i+1]:
+                pattern.add_stitch_absolute(pyembroidery.STITCH, p1.x, p1.y)
+                stitched[i+1] = True
+            
+            intersection_points = []
+            if all([p0.x < x < p1.x] for x in unique_x_values):
+                for x_i in unique_x_values:
+                    intersection_points.append([x_i, p0.y])
+            
+            intersection_points = sorted(intersection_points, key = lambda p: p[0])
+            point_idx = 0
+
+            pattern.add_stitch_absolute(pyembroidery.STITCH, (p0.x + intersection_points[point_idx][0]) // 2, p0.y)
+            pattern.add_stitch_absolute(pyembroidery.STITCH, (p1.x + intersection_points[point_idx][-1]) // 2 , p0.y)
+            while point_idx < len(intersection_points)-1:
+                mid_x = (intersection_points[point_idx][0] + intersection_points[point_idx+1][0]) // 2            
+                point_idx += 1
+                pattern.add_stitch_absolute(pyembroidery.STITCH, mid_x, p0.y)
+
+        # inkex.errormsg("where are my stitches:{}, num_stitches = {}".format(pattern.stitches, len(pattern.stitches)))
+        pyembroidery.write_pes(pattern, '/Users/hdacosta/Desktop/UROP/output/pattern.dst')
+
+        # sanity_check
+        # inkex.errormsg("num intersections:{}".format(len(intersection_points)))
+
+
+
+
+
+    def make_vertical_stitches(self):
+        pass 
+
+
 
 if __name__ == '__main__':
     CreateGridEffect().run()
 
 
-
-# Take a look at this as to why current layer gets edited in inkstitch
-# def get_current_layer(self):
-#     # if no layer is selected, inkex defaults to the root, which isn't
-#     # particularly useful
-#     current_layer = self.svg.get_current_layer()
-#     if current_layer is self.document.getroot():
-#         try:
-#             current_layer = self.document.xpath(".//svg:g[@inkscape:groupmode='layer']", namespaces=inkex.NSS)[0]
-#         except IndexError:
-#             # No layers at all??  Fine, we'll stick with the default.
-#             pass
-#     return current_layer
