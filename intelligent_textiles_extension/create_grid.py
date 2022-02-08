@@ -11,7 +11,8 @@ import wx
 import wx.adv
 from lxml import etree
 import pyembroidery
-
+import matplotlib.pyplot as plt
+import numpy as np
 
 MIN_GRID_SPACING = inkex.units.convert_unit(2.5, "mm")
 BBOX_SPACING = inkex.units.convert_unit(5, 'mm')
@@ -62,9 +63,6 @@ class CreateGridEffect(inkex.Effect):
         shape_points = None
         rectangle = None 
         for elem in self.svg.get_selected(): # PATH ELEMENT
-            inkex.errormsg("things selected:{}".format(len(self.svg.get_selected())))
-            inkex.errormsg("type of elem:{}".format(type(elem)))
-            inkex.errormsg("path:{}".format(elem.path))
             shape_points = [p for p in elem.path.end_points]
             bbox = elem.bounding_box()
             rectangle = BoundingBoxMetadata(inkex.units.convert_unit(bbox.width, 'mm'),
@@ -165,7 +163,6 @@ class CreateGridWorker():
                 points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
                 points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
             wire_count += 1
-        inkex.errormsg("RESULT:{}".format(points))
         return self.create_path(points, is_horizontal=True)
 
     def lay_vertical_wires(self, vertical_wire_spacing):
@@ -193,14 +190,11 @@ class CreateGridWorker():
         
         color = "red" if is_horizontal else "blue"
         path_str = ' '.join(points)
-        inkex.errormsg("points:{}".format(path_str))
         path = inkex.Polyline(attrib={
         'id': "wire_segment",
         'points': path_str,
         })
 
-        inkex.errormsg("input points:{}".format(points))
-        inkex.errormsg("path str:{}".format(str(path.get_path())))
         line_attribs = {
                 'style' : "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
                 'd': str(path.get_path())
@@ -213,30 +207,30 @@ class CreateGridWorker():
 
 class MakeStitchesWorker():
     def __init__(self, horizontal_wire, vertical_wire):
-        self.horizontal_wire_points = [p for p in horizontal_wire.get_path().end_points]
+        self.horizontal_wire_points = sorted([p for p in horizontal_wire.get_path().end_points], key=lambda p: -p[1])
         self.vertical_wire = [p for p in vertical_wire.get_path().end_points]
         self.stitch_points = []
     
     def make_horizontal_stitches(self):
         unique_x_values = set([p.x for p in self.vertical_wire])
-        inkex.errormsg("unique x's:{}".format(unique_x_values))
         
         pattern = pyembroidery.EmbPattern()
         # add stitches at end points
         # for p in self.horizontal_wire_points:
         #     pattern.add_stitch_absolute(pyembroidery.STITCH, p.x, p.y)
         
-        stitched = [False for _ in range(len(self.horizontal_wire_points))]
+        stitch_array = []
+        inkex.errormsg("HORZ WIRE PTS:{}".format(self.horizontal_wire_points))
         for i in range(0, len(self.horizontal_wire_points) - 1, 2):
+            row_stitch_array = []
+
             p0 = self.horizontal_wire_points[i]
             p1 = self.horizontal_wire_points[i+1]
 
-            if not stitched[i]:
-                pattern.add_stitch_absolute(pyembroidery.STITCH, p0.x, p0.y)
-                stitched[i] = True
-            if not stitched[i+1]:
-                pattern.add_stitch_absolute(pyembroidery.STITCH, p1.x, p1.y)
-                stitched[i+1] = True
+            row_stitch_array.append([p0.x, p0.y])   
+            row_stitch_array.append([p1.x,p1.y])         
+
+            
             
             intersection_points = []
             if all([p0.x < x < p1.x] for x in unique_x_values):
@@ -245,24 +239,77 @@ class MakeStitchesWorker():
             
             intersection_points = sorted(intersection_points, key = lambda p: p[0])
             point_idx = 0
+            # inkex.errormsg("num intersection points:{}".format(len(intersection_points)))
+            # inkex.errormsg("what are intersection points:{},{}".format(intersection_points, len(intersection_points)))
+            if p0.x < p1.x: #p0 is on the right
+                row_stitch_array.append([(p0.x + intersection_points[point_idx][0]) // 2, p0.y])
+                row_stitch_array.append([(p1.x + intersection_points[-1][0]) // 2, p1.y])
 
-            pattern.add_stitch_absolute(pyembroidery.STITCH, (p0.x + intersection_points[point_idx][0]) // 2, p0.y)
-            pattern.add_stitch_absolute(pyembroidery.STITCH, (p1.x + intersection_points[point_idx][-1]) // 2 , p0.y)
+                # pattern.add_stitch_absolute(pyembroidery.STITCH, (p0.x + intersection_points[point_idx][0]) // 2, p0.y)
+                # pattern.add_stitch_absolute(pyembroidery.STITCH, (p1.x + intersection_points[-1][0]) // 2, p1.y)
+            else:
+                row_stitch_array.append([(p0.x + intersection_points[-1][0]) // 2, p0.y])
+                row_stitch_array.append([(p1.x + intersection_points[0][0]) // 2, p1.y])
+
+                # pattern.add_stitch_absolute(pyembroidery.STITCH, (p0.x + intersection_points[-1][0]) // 2, p0.y)
+                # pattern.add_stitch_absolute(pyembroidery.STITCH, (p1.x + intersection_points[0][0]) // 2, p1.y)
+            inkex.errormsg("first and last endpoint x values: {} and {}".format(p0.x, p1.x))
+            inkex.errormsg("first and last x values:{} and {}".format(intersection_points[point_idx][0], intersection_points[-1][0]))
+
             while point_idx < len(intersection_points)-1:
+                
                 mid_x = (intersection_points[point_idx][0] + intersection_points[point_idx+1][0]) // 2            
                 point_idx += 1
-                pattern.add_stitch_absolute(pyembroidery.STITCH, mid_x, p0.y)
+                row_stitch_array.append([mid_x, p0.y])
+                # pattern.add_stitch_absolute(pyembroidery.STITCH, mid_x, p0.y)
+            
+            # need to stitch wire continously from bottom left to top right, so row_stitch array is reversed 
+            # depending on what side of the wire we started on for this iteration
+            if p0.x < p1.x: #left to right
+                row_stitch_array = sorted(row_stitch_array, key= lambda p: p[0])
+            else: # right to left
+                row_stitch_array = sorted(row_stitch_array, key= lambda p: p[0], reverse=True)
+            
+            # add to stitch array
+            stitch_array.extend(row_stitch_array)
 
-        # inkex.errormsg("where are my stitches:{}, num_stitches = {}".format(pattern.stitches, len(pattern.stitches)))
+        # add actual stitches now that the stitch points are in the order we want them to be in 
+        for x, y in stitch_array:
+            pattern.add_stitch_absolute(pyembroidery.STITCH, x, y)
+        
+        inkex.errormsg("where are my stitches:{}, num_stitches = {}".format(pattern.stitches, len(pattern.stitches)))
         pyembroidery.write_pes(pattern, '/Users/hdacosta/Desktop/UROP/output/pattern.dst')
 
         # sanity_check
         # inkex.errormsg("num intersections:{}".format(len(intersection_points)))
+        self.visualize_stitches(pattern)
+    
+    def visualize_stitches(self, pattern):
+        #visualize stitches
+        stitch_info = np.asarray(pattern.stitches)
+        #Extract info from np.array and convert to mm
+        x_coord = stitch_info[:,0]/10
+        inkex.errormsg("vis x coords:{}".format(x_coord))
+        y_coord = stitch_info[:,1]/10
+        num_of_stitches = len(x_coord)
+        inkex.errormsg("NUM OF STITCHES:{}".format(num_of_stitches))
+        #Plot the stitches
+        stitch_loc = plt.scatter(x_coord, y_coord, s = 1, c = 'black')
 
+        #Add label to every ith stitch
+        i = 0
+        while i <= num_of_stitches - 1: 
+            plt.annotate(i, (x_coord[i], y_coord[i]))
+            i += 1
 
+        #label axis
+        plt.title("Stitch Vis")
+        plt.xlabel('X Coordinates (mm)')
+        plt.ylabel('Y Coordinates (mm)')
 
-
-
+        #show the plot
+        plt.show()
+         
     def make_vertical_stitches(self):
         pass 
 
