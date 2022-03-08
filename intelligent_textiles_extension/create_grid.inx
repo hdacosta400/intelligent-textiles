@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
-    <name>Create Grid</name>
+    <name>Create BBox Grid</name>
     <id>org.inkscape.effect.create_grid</id>
     <effect>
         <effects-menu>

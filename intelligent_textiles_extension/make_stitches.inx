@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+    <name>Make Stitches</name>
+    <id>org.inkscape.effect.make_stitches</id>
+    <effect>
+        <effects-menu>
+            <submenu name="Sensor Grid Tools" />
+        </effects-menu>
+    </effect>
+    <param name="wire_type" type="optiongroup" appearance="radio" gui-text="Method">
+       <option value="0">Straight</option>
+       <option value="1">Curved</option>
+    </param>    <script>
+        <command location="inx" interpreter="python">make_stitches.py</command>
+     </script>
+</inkscape-extension>

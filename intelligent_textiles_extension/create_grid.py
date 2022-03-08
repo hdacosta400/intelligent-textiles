@@ -1,14 +1,6 @@
-import json
-import os
-import sys
-from base64 import b64decode
-from argparse import ArgumentParser, REMAINDER
-
-import appdirs
+from argparse import ArgumentParser
 import inkex
-from inkex import Line, Rectangle, Path, Polyline
-import wx
-import wx.adv
+from inkex import Rectangle
 from lxml import etree
 import pyembroidery
 import matplotlib.pyplot as plt
@@ -63,59 +55,29 @@ class CreateGridEffect(inkex.Effect):
         shape_points = None
         rectangle = None 
         for elem in self.svg.get_selected(): # PATH ELEMENT
+            units = "mm" if type(elem) == Rectangle else "px"
             shape_points = [p for p in elem.path.end_points]
             bbox = elem.bounding_box()
-            rectangle = BoundingBoxMetadata(inkex.units.convert_unit(bbox.width, 'mm'),
-                                            inkex.units.convert_unit(bbox.height, 'mm'),
-                                            inkex.units.convert_unit(bbox.top, 'mm'),
-                                            inkex.units.convert_unit(bbox.bottom, 'mm'),
-                                            inkex.units.convert_unit(bbox.left, 'mm'),
-                                            inkex.units.convert_unit(bbox.right, 'mm'))
+            inkex.errormsg("shape points, bbox:{} , {}".format(shape_points, bbox))
+            rectangle = BoundingBoxMetadata(inkex.units.convert_unit(bbox.width, units),
+                                            inkex.units.convert_unit(bbox.height, units),
+                                            inkex.units.convert_unit(bbox.top, units),
+                                            inkex.units.convert_unit(bbox.bottom, units),
+                                            inkex.units.convert_unit(bbox.left, units),
+                                            inkex.units.convert_unit(bbox.right, units))
 
-        create_grid_worker = CreateGridWorker(shape_points, rectangle, int(args.horizontal_wires), int(args.vertical_wires), self.svg, self.document)
+        create_grid_worker = CreateGridWorker(shape_points, rectangle, int(args.horizontal_wires), int(args.vertical_wires), self.svg)
         create_grid_worker.run()
 
-        # parent = self.svg.get_current_layer()
-        # self.draw_SVG_line(10,10,0,0, parent)
-
-    def draw_SVG_line(self, x1, y1, x2, y2, parent):
-        color = "red"
-        line_attribs = {
-                        'style' : "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-                        # 'd' : 'M 55.3977 90.881 H 114.748 V 80.9478 H 46.3977 V 78.0146 H 114.748 V 75.0815 H 46.3977 V 72.1483 H 114.748 V 69.2151 H 46.3977 V 66.2819 H 114.748 V 63.3488 H 46.3977 V 60.4156 H 114.748 V 57.4824 H 46.3977',
-                        'points': 'M 0,0 9,9 5,5'
-                        }
-
-        line = etree.SubElement(parent, inkex.addNS('path','svg'), line_attribs)
-
-        points = ['0,0', '10,10']
-        color = "red"
-        path_str = ' '.join(points)
-        poly = inkex.Polyline(attrib={
-        # 'id': "wire_segment",
-        'style':"stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-        'points': path_str,
-        })
-        inkex.errormsg(str(poly.get_path()))
-
-        line_attribs = {
-                'style' : "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-                'd': str(poly.get_path())
-        }
-        
-        etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)   
-
-        # polyline(points,style=style)
 class CreateGridWorker():
 
-    def __init__(self, shape_points, rectangle, num_horizontal_wires, num_vertical_wires, svg, document):
+    def __init__(self, shape_points, rectangle, num_horizontal_wires, num_vertical_wires, svg):
         self.shape_points = shape_points
         self.rectangle = rectangle
         self.num_horizontal_wires = num_horizontal_wires
         self.num_vertical_wires = num_vertical_wires
         self.svg = svg
         self.upper_left, self.upper_right,self.lower_left,self.lower_right = self.rectangle.get_rectangle_points()
-        self.document = document
 
 
     def run(self):
@@ -157,12 +119,12 @@ class CreateGridWorker():
             if wire_count % 2 == 0:
                 points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
                 points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
-                # for p in connections:
-                #     points.append('{},{}'.format(p.x, p.y))
+
             else:
                 points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
                 points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
             wire_count += 1
+        inkex.errormsg("coming to lay horsz points:{}".format(points))
         return self.create_path(points, is_horizontal=True)
 
     def lay_vertical_wires(self, vertical_wire_spacing):
@@ -239,20 +201,12 @@ class MakeStitchesWorker():
             
             intersection_points = sorted(intersection_points, key = lambda p: p[0])
             point_idx = 0
-            # inkex.errormsg("num intersection points:{}".format(len(intersection_points)))
-            # inkex.errormsg("what are intersection points:{},{}".format(intersection_points, len(intersection_points)))
             if p0.x < p1.x: #p0 is on the right
                 row_stitch_array.append([(p0.x + intersection_points[point_idx][0]) // 2, p0.y])
                 row_stitch_array.append([(p1.x + intersection_points[-1][0]) // 2, p1.y])
-
-                # pattern.add_stitch_absolute(pyembroidery.STITCH, (p0.x + intersection_points[point_idx][0]) // 2, p0.y)
-                # pattern.add_stitch_absolute(pyembroidery.STITCH, (p1.x + intersection_points[-1][0]) // 2, p1.y)
             else:
                 row_stitch_array.append([(p0.x + intersection_points[-1][0]) // 2, p0.y])
                 row_stitch_array.append([(p1.x + intersection_points[0][0]) // 2, p1.y])
-
-                # pattern.add_stitch_absolute(pyembroidery.STITCH, (p0.x + intersection_points[-1][0]) // 2, p0.y)
-                # pattern.add_stitch_absolute(pyembroidery.STITCH, (p1.x + intersection_points[0][0]) // 2, p1.y)
             inkex.errormsg("first and last endpoint x values: {} and {}".format(p0.x, p1.x))
             inkex.errormsg("first and last x values:{} and {}".format(intersection_points[point_idx][0], intersection_points[-1][0]))
 
@@ -261,7 +215,6 @@ class MakeStitchesWorker():
                 mid_x = (intersection_points[point_idx][0] + intersection_points[point_idx+1][0]) // 2            
                 point_idx += 1
                 row_stitch_array.append([mid_x, p0.y])
-                # pattern.add_stitch_absolute(pyembroidery.STITCH, mid_x, p0.y)
             
             # need to stitch wire continously from bottom left to top right, so row_stitch array is reversed 
             # depending on what side of the wire we started on for this iteration
@@ -277,22 +230,18 @@ class MakeStitchesWorker():
         for x, y in stitch_array:
             pattern.add_stitch_absolute(pyembroidery.STITCH, x, y)
         
-        inkex.errormsg("where are my stitches:{}, num_stitches = {}".format(pattern.stitches, len(pattern.stitches)))
         pyembroidery.write_pes(pattern, '/Users/hdacosta/Desktop/UROP/output/pattern.dst')
 
         # sanity_check
         # inkex.errormsg("num intersections:{}".format(len(intersection_points)))
-        self.visualize_stitches(pattern)
-    
+        # self.visualize_stitches(pattern)
     def visualize_stitches(self, pattern):
         #visualize stitches
         stitch_info = np.asarray(pattern.stitches)
         #Extract info from np.array and convert to mm
         x_coord = stitch_info[:,0]/10
-        inkex.errormsg("vis x coords:{}".format(x_coord))
         y_coord = stitch_info[:,1]/10
         num_of_stitches = len(x_coord)
-        inkex.errormsg("NUM OF STITCHES:{}".format(num_of_stitches))
         #Plot the stitches
         stitch_loc = plt.scatter(x_coord, y_coord, s = 1, c = 'black')
 
@@ -309,6 +258,7 @@ class MakeStitchesWorker():
 
         #show the plot
         plt.show()
+
          
     def make_vertical_stitches(self):
         pass 

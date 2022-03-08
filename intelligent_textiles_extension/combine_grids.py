@@ -1,27 +1,8 @@
-from operator import is_
-from inkex.deprecated import INKEX_DIR
-from networkx.algorithms.graphical import is_graphical
-from networkx.algorithms.operators.binary import union
-import sys
-from base64 import b64decode
-from argparse import ArgumentParser, REMAINDER
-
-import appdirs
+from argparse import ArgumentParser
 import inkex
-from inkex import Line, Rectangle, Path, Polyline, PathElement
-import wx
-import wx.adv
+from inkex import Polyline, PathElement
 from lxml import etree
 
-class CombineGridsFrame(wx.Frame):
-    DEFAULT_FONT = "small_font"
-    def __init__(self, shape1, shape2, svg, *args, **kwargs):
-        if sys.platform.startswith('win32'):
-            import locale
-            locale.setlocale(locale.LC_ALL, "C")
-            lc = wx.Locale()
-            lc.Init(wx.LANGUAGE_DEFAULT)  
-        pass
 
 class Connector():
     '''
@@ -54,19 +35,22 @@ class Connector():
 
 class CombineGridsEffect(inkex.Effect):
     def add_arguments(self, pars):
-        pars.add_argument("--alignment", type=bool, help="The type of connection to make")
+        pars.add_argument("--alignment", type=int, help="The type of connection to make")
     
     def effect(self):
         arg_parser = ArgumentParser()
         self.add_arguments(arg_parser)
         args,_ = arg_parser.parse_known_args()
-        combine_grids_worker = CombineGridsWorker(self.svg, args.alignment)
+        inkex.errormsg("what is alignment:{}".format(args.alignment))
+        is_horizontal_connection = True if args.alignment == 1 else False
+        combine_grids_worker = CombineGridsWorker(self.svg, is_horizontal_connection)
         combine_grids_worker.run()
 
 
 class CombineGridsWorker():
     COMMANDS = ["combine_grids"]
     def __init__(self, svg, is_horizontal_connection):
+        print("WORKER INIT")
         self.svg = svg
         self.is_horizontal_connection = is_horizontal_connection
         self.wires = []
@@ -306,6 +290,7 @@ class CombineGridsWorker():
         etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
 
     def run(self):
+        
         connector_pins = []
         connector_bbox = None
         for elem in self.svg.get_selected():
@@ -343,7 +328,6 @@ class Wire():
     def get_num_wire_joins(self, is_horizontal):
         '''
         Determines how many wires were horizontally joined together to create the current wire object
-
         The default is 1
         '''
         point_counter = 1

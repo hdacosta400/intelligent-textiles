@@ -12,14 +12,12 @@ MIN_GRID_SPACING = inkex.units.convert_unit(2.5, "mm")
 class CreateCustomGridEffect(inkex.Effect):
 
     def add_arguments(self, pars):
-        inkex.errormsg("HELOOOOOOOOOOO")
         pars.add_argument("--horizontal_wires", type=str,\
             help="The number of desired horizontal wires")
         pars.add_argument("--vertical_wires", type=str,\
             help="The number of desired vertical wires")
 
     def effect(self):
-        inkex.errormsg("HELOOOOOOOOOOO")
         arg_parser = ArgumentParser()
         self.add_arguments(arg_parser)
         args, _ = arg_parser.parse_known_args()
@@ -85,8 +83,6 @@ class CreateCustomGridWorker():
         # bottom
         points = ['{}, {}'.format(p.x, p.y) for p in [self.lower_left, self.lower_right]]
         self.create_path(points, "orange")
-
-
 
         
     def run(self): 
