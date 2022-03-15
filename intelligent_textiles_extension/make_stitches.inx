@@ -10,7 +10,10 @@
     <param name="wire_type" type="optiongroup" appearance="radio" gui-text="Method">
        <option value="0">Straight</option>
        <option value="1">Curved</option>
-    </param>    <script>
+    </param>    
+    <param name="dst_folder" type="path" mode="folder" gui-text="Destination Folder:">my/path/</param>
+    <param name="file_name" type="string" gui-text="File name:">stitch_file.dst</param>
+    <script>
         <command location="inx" interpreter="python">make_stitches.py</command>
      </script>
 </inkscape-extension>

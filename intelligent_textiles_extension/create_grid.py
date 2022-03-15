@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 import inkex
-from inkex import Rectangle
+from inkex import Rectangle, Group
 from lxml import etree
 import pyembroidery
 import matplotlib.pyplot as plt
@@ -107,41 +107,47 @@ class CreateGridWorker():
         
 
         # dynamic stitching stuff!
-        stitch_worker = MakeStitchesWorker(horizontal_wire, vertical_wire)
-        stitch_worker.make_horizontal_stitches()
+        # stitch_worker = MakeStitchesWorker(horizontal_wire, vertical_wire)
+        # stitch_worker.make_horizontal_stitches()
 
     def lay_horizontal_wires(self, horizontal_wire_spacing):
         curr_point = list(self.lower_left)
         wire_count = 0
         points = []
+        wires = []
+        
         while wire_count != self.num_horizontal_wires:
             curr_point[1] -= horizontal_wire_spacing
-            if wire_count % 2 == 0:
-                points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
-                points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
-
-            else:
-                points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
-                points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
+            # if wire_count % 2 == 0:
+            points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
+            points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
+            w = self.create_path(points, is_horizontal=True)
+            wires.append(w)
+            points = []
+            # else:
+            #     points.append('{},{}'.format(self.rectangle.right, curr_point[1]))
+            #     points.append('{},{}'.format(self.rectangle.left - BBOX_SPACING, curr_point[1]))
             wire_count += 1
-        inkex.errormsg("coming to lay horsz points:{}".format(points))
-        return self.create_path(points, is_horizontal=True)
+        # return self.create_path(points, is_horizontal=True)
+        return wires
 
     def lay_vertical_wires(self, vertical_wire_spacing):
         curr_point = list(self.upper_left)
         wire_count = 0
         points = []
+        wires = []
         while wire_count != self.num_vertical_wires:
             curr_point[0] += vertical_wire_spacing
-            if wire_count % 2 == 0:
-                points.append('{},{}'.format(curr_point[0], self.rectangle.top - BBOX_SPACING))
-                points.append('{},{}'.format(curr_point[0], self.rectangle.bottom))
-            else:
-                points.append('{},{}'.format(curr_point[0], self.rectangle.bottom))
-                points.append('{},{}'.format(curr_point[0], self.rectangle.top - BBOX_SPACING))
+            # if wire_count % 2 == 0:
+            points.append('{},{}'.format(curr_point[0], self.rectangle.top - BBOX_SPACING))
+            points.append('{},{}'.format(curr_point[0], self.rectangle.bottom))
+            wires.append(self.create_path(points, is_horizontal=False))
+            points = []
+            # else:
+            #     points.append('{},{}'.format(curr_point[0], self.rectangle.bottom))
+            #     points.append('{},{}'.format(curr_point[0], self.rectangle.top - BBOX_SPACING))
             wire_count += 1
-
-        return self.create_path(points, is_horizontal=False)
+        return wires
 
     
 

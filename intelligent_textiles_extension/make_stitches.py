@@ -7,22 +7,24 @@ from matplotlib import pyplot as plt
 from lxml import etree
 import math
 from bezier import Curve
-from scipy import interpolate
 import simplepath
+import js2py
 
 class MakeStitchesEffect(inkex.Effect):
     def add_arguments(self, pars):
         pars.add_argument("--wire_type", type=int)
+        pars.add_argument("--dst_folder", type=str)
+        pars.add_argument("--file_name", type=str)
     
     def effect(self):
         arg_parser = ArgumentParser()
         self.add_arguments(arg_parser)
         args,_ = arg_parser.parse_known_args()
-        wire = None 
+        wires = [] 
 
         # add a case for multiple selections (grid stitching)
         for elem in self.svg.get_selected():
-            wire = elem
+            wires.append(elem)
 
         # debugging for mapping out control and end points of a path
         # poi = [p for p in wire.path.end_points]
@@ -31,9 +33,10 @@ class MakeStitchesEffect(inkex.Effect):
         # poi = [p for p in wire.path.control_points]
         # points = ['{},{}'.format(p.x,p.y) for p in poi]
         # self.create_path(points, False)
-
+        
         is_curve = True if args.wire_type == 1 else False
-        make_stitches_worker = MakeStitchesWorker(wire, is_curve)
+        make_stitches_worker = MakeStitchesWorker(wires, is_curve, args.file_name, args.dst_folder)
+        inkex.errormsg("what is file path:{}".format(args.dst_folder))
         make_stitches_worker.run()
     
     def create_path(self, points, is_horizontal):
@@ -58,25 +61,31 @@ class MakeStitchesEffect(inkex.Effect):
         return path
 
 class MakeStitchesWorker(inkex.Effect):
-    def __init__(self, wire, is_curve):
-        self.wire = wire
+    def __init__(self, wires, is_curve, filename, dst_folder):
+        self.wires = wires
+        inkex.errormsg("len wires:{}".format(len(wires)))
         self.is_curve = is_curve
+        self.filename = filename
+        if self.filename.split('.')[1] not in ['dst', 'pes', '.exp', '.jef', '.vp3']:
+            inkex.errormsg("Pyembroidery only supports .dst, .pes, .exp, .jef, and .vp3 formats. Please change file type to save.")
+            return 
+        self.dst_folder = dst_folder
 
-        self.control_points = []
-        if self.is_curve:
-            self.control_points = [p for p in wire.path.control_points]
+        self.end_points = []
+        for wire in wires:
+            self.end_points.append([p for p in wire.path.end_points])
 
-        self.end_points = [p for p in wire.path.end_points]
         self.wire_points = []
         if self.is_curve:
-            points = []
-            path = simplepath.parsePath(wire.path)
-            for t, ele in path:
-                for i in range(0,len(ele)-1,2):
-                    x = ele[i]
-                    y = ele[i+1]
-                    points.append([x,y])
-            self.wire_points = points
+            for wire in wires:
+                points = []
+                path = simplepath.parsePath(wire.path)
+                for t, ele in path:
+                    for i in range(0,len(ele)-1,2):
+                        x = ele[i]
+                        y = ele[i+1]
+                        points.append([x,y])
+                self.wire_points.append(points)
         else:
             self.wire_points = self.end_points
         
@@ -86,30 +95,32 @@ class MakeStitchesWorker(inkex.Effect):
         Bezier curves represented with 4 points
         We can use them and a general parametric equation to generate stitch points
         '''
-        stitch_points = []
+        all_curves = []
+        for w in self.wire_points:
+            stitch_points = []
 
-        nodes = np.asfortranarray([
-            # [p.x for p in  self.wire_points],
-            # [p.y for p in  self.wire_points]
-            [p[0] for p in  self.wire_points],
-            [p[1] for p in  self.wire_points]
-        ]).astype('double')
+            nodes = np.asfortranarray([
+                [p[0] for p in  w],
+                [p[1] for p in  w]
+            ]).astype('double')
 
-        curve = Curve.from_nodes(nodes, copy=True)
+            curve = Curve.from_nodes(nodes, copy=True)
 
 
-        t = 0.01
-        point = curve.evaluate(t)
-        x = point[0][0]
-        y = point[1][0]
-        stitch_points.append([x,y])
-        for _ in range(99): # change this number to change pitch of stitches, may also convert to user input in the future
+            t = 0.01
             point = curve.evaluate(t)
             x = point[0][0]
             y = point[1][0]
             stitch_points.append([x,y])
-            t += .01
-        return stitch_points
+            for _ in range(99): # change this number to change pitch of stitches, may also convert to user input in the future
+                point = curve.evaluate(t)
+                x = point[0][0]
+                y = point[1][0]
+                stitch_points.append([x,y])
+                t += .01
+
+            all_curves.append(stitch_points)
+        return all_curves
 
     def compute_euclidean_distance(self, x1, y1, x2, y2):
         return math.sqrt((y2 - y1) ** 2 + (x2 - x1) ** 2)
@@ -134,24 +145,34 @@ class MakeStitchesWorker(inkex.Effect):
         return points
 
     def stitch_segment(self):
+        
         stitch_points = []
-        for i in range(len(self.wire_points) - 1):
-            p1 = self.wire_points[i]
-            p2 = self.wire_points[i+1]
-            stitch_points.append([p1.x, p1.y])
-            line = [[p1.x, p1.y], [p2.x, p2.y]]
-            num_points = 3 # could make this a user input somehow?
-            stitch_points.extend(self.segment_line(line, num_points))
+        count = 0
+        for wire in self.wire_points:   
+            for i in range(len(wire) - 1):
+                p1 = wire[i]
+                p2 = wire[i+1]
+                # stitch_points.append([p1.x, p1.y])
+                line = [[p1.x, p1.y], [p2.x, p2.y]]
+                num_points = 3 # could make this a user input somehow?
+                line_points = [[p1.x, p1.y]] + self.segment_line(line, num_points)
+                if count % 2 == 1:
+                    line_points = line_points[::-1]
+
+                stitch_points.append(line_points)
+            count += 1
+        inkex.errormsg(stitch_points)
         return stitch_points
 
 
 
         
-    def make_stitches(self, stitch_points):
+    def make_stitches(self, stitch_group):
         pattern = pyembroidery.EmbPattern()
-        for x, y in stitch_points:
-            pattern.add_stitch_absolute(pyembroidery.STITCH, x, y)
-        pyembroidery.write_pes(pattern, '/Users/hdacosta/Desktop/UROP/output/pattern1.dst')
+        for stitch_points in stitch_group:
+            for x, y in stitch_points:
+                pattern.add_stitch_absolute(pyembroidery.STITCH, x, y)
+        pyembroidery.write_pes(pattern, '{}/{}'.format(self.dst_folder, self.filename))
         self.visualize_stitches(pattern)
 
 
@@ -169,7 +190,7 @@ class MakeStitchesWorker(inkex.Effect):
         i = 0
         while i <= num_of_stitches - 1: 
             plt.annotate(i, (x_coord[i], y_coord[i]))
-            i += 5
+            i += 1
 
         #label axis
         plt.title("Stitch Vis")
@@ -180,12 +201,12 @@ class MakeStitchesWorker(inkex.Effect):
         plt.show()
 
     def run(self):
-        stitch_points = None
+        stitch_group = None
         if self.is_curve:
-            stitch_points = self.stitch_curve()
+            stitch_group = self.stitch_curve()
         else:
-            stitch_points = self.stitch_segment()
-        self.make_stitches(stitch_points)
+            stitch_group = self.stitch_segment()
+        self.make_stitches(stitch_group)
 
 
 
