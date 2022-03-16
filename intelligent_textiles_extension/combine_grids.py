@@ -2,6 +2,7 @@ from argparse import ArgumentParser
 import inkex
 from inkex import Polyline, PathElement
 from lxml import etree
+from inkex.styles import Style
 
 
 class Connector():
@@ -43,6 +44,7 @@ class CombineGridsEffect(inkex.Effect):
         args,_ = arg_parser.parse_known_args()
         inkex.errormsg("what is alignment:{}".format(args.alignment))
         is_horizontal_connection = True if args.alignment == 1 else False
+
         combine_grids_worker = CombineGridsWorker(self.svg, is_horizontal_connection)
         combine_grids_worker.run()
 
@@ -56,216 +58,70 @@ class CombineGridsWorker():
         self.wires = []
         self.connector = None
 
-    def pair_wires_horizontally(self):
-        inkex.errormsg("COMING INTO PAIR")
-        rect1,rect2 = self.wires[0].bbox, self.wires[1].bbox
-        left_wire = None 
-        right_wire = None
 
-        if rect1.left < rect2.left:
-            left_wire, right_wire = self.wires
-        else:
-            right_wire, left_wire = self.wires
-        
-        union_wire_points = self.union_wires(left_wire, right_wire, is_horizontal=True)
-        left_wire.wire.getparent().remove(left_wire.wire)
-        right_wire.wire.getparent().remove(right_wire.wire)
-
-        self.create_path(union_wire_points, is_horizontal=True)
-
-    
-    def pair_wires_vertically(self):
-        rect1,rect2 = self.wires[0].bbox, self.wires[1].bbox
-        top_wire = None 
-        bottom_wire = None
-        if rect1.top < rect2.top:
-            top_wire, bottom_wire = self.wires
-        else:
-            bottom_wire, top_wire = self.wires
-        
-        if top_wire.get_num_endpoints(is_horizontal=False) % 2 == 1:
-            top_wire.set_flipped_points(is_horizontal=False)
-        union_wire_points = self.union_wires(top_wire, bottom_wire, is_horizontal=False)
-        top_wire.wire.getparent().remove(top_wire.wire)
-        bottom_wire.wire.getparent().remove(bottom_wire.wire)
-
-        self.create_path(union_wire_points, is_horizontal=False)
-    
-    
-    def union_wires(self, min_wire, max_wire, is_horizontal): #TODO: refactor names , func enforces that min_wire is left/top and max_wire is right/bottom
-        min_wire_points = min_wire.get_points()
-        max_wire_points = max_wire.get_points()
-        # inkex.errormsg("open connector idx:{}".format(self.connector.open_wire_idx))
-        # determine how many points we have to scan over, scales by factor of 2 for every wire that gets joined to one another
-        min_multiplier = min_wire.get_num_wire_joins(is_horizontal)
-        max_multiplier = max_wire.get_num_wire_joins(is_horizontal)
-        min_wire_idx = 2 * min_multiplier
-        max_wire_idx = 0
-        min_points = ['{},{}'.format(p.x,p.y) for p in min_wire_points[0: min_wire_idx]]
-        union_wire_points = []
-        union_wire_points.extend(min_points)
-
-        while min_wire_idx != len(min_wire_points):
-            # 4 * multiplier points constitutes a wrap around from one wire path to the next
-            max_wire_splice_length = min(4 * max_multiplier, len(max_wire_points) - max_wire_idx)
-            max_points = ['{},{}'.format(p.x,p.y) for p in max_wire_points[max_wire_idx: max_wire_idx + max_wire_splice_length]]
-            union_wire_points.extend(max_points)
-            max_wire_idx += max_wire_splice_length
-
-            min_wire_splice_length = min(4 * min_multiplier, len(min_wire_points) - min_wire_idx)
-            min_points = ['{},{}'.format(p.x,p.y) for p in min_wire_points[min_wire_idx: min_wire_idx + min_wire_splice_length]]
-            union_wire_points.extend(min_points)
-            min_wire_idx += min_wire_splice_length
-        
-        max_points = ['{},{}'.format(p.x,p.y) for p in max_wire_points[max_wire_idx: len(max_wire_points)]]
-        union_wire_points.extend(max_points)
-            
-        return union_wire_points
-    
-    def horizontal_grid_union(self):
-        sorted_wires = sorted(self.wires, key= lambda x: -x.bbox.top) # start at bottommost wire
-        union_wire_connector_points = self.unify_grids(sorted_wires, True)
-        self.create_path(union_wire_connector_points, is_horizontal=True)
-        
-    def vertical_grid_union(self):
-        sorted_wires = sorted(self.wires, key= lambda x: x.bbox.left) # start at bottommost wire
-        union_wire_connector_points = self.unify_grids(sorted_wires, False)
-        self.create_path(union_wire_connector_points, is_horizontal=False)
-
-    def combine_wires(self, wires, is_horizontal):
-        union_wire_points = []
-        union_wire_sections = {}
-        flip = False # has any wire in union been flipped?
-        for i in range(len(wires)):
-            wire = wires[i]
-            points = None
-            has_odd_wires = wire.get_num_endpoints(is_horizontal) % 2 == 1
-            points = wire.get_points() if not flip else wire.get_flipped_points(is_horizontal)
-            if has_odd_wires:
-                flip = not flip
-
-            formatted_points = ['{},{}'.format(p.x,p.y) for p in points]
-            union_wire_points.extend(formatted_points)
-            # map last index where current wire ends
-            union_wire_sections[len(union_wire_points)] = wire.get_num_wire_joins(is_horizontal)
-            wire.wire.getparent().remove(wire.wire)
-        return union_wire_points, union_wire_sections
-
-    def get_section_multiplier(self, current_index, union_wire_sections):
-        for key in union_wire_sections.keys():
-            if current_index < key:
-                return key, union_wire_sections[key]
-        return 0,0
-    
-    def get_shape_arrangment(self, grids, is_horizontal):
-        shape_arrangement = None
-        if is_horizontal:
-            shape_arrangement = sorted(grids, key = lambda x: x.bbox.left)
-        else:
-            shape_arrangement = sorted(grids, key = lambda x: x.bbox.top)
-        return shape_arrangement
-        
-    def unify_grids(self, wires, is_horizontal):
-        shape_arrangement = None
-        grids = wires[:]
-        has_connector = self.connector is not None
-        if has_connector: # user want to hook up grids to pins
-            grids.append(self.connector)
-
-        if is_horizontal:
-            shape_arrangement = sorted(grids, key = lambda x: x.bbox.left)
-        else:
-            shape_arrangement = sorted(grids, key = lambda x: x.bbox.top)
-        
-        reversed_connection = None
-        max_wire = None
-        if has_connector:
-            reversed_connection = self.connector == shape_arrangement[0]
-        else:
-            max_wire = max(wires, key= lambda w: w.get_num_endpoints(is_horizontal))
-            reversed_connection = max_wire == shape_arrangement[0]
-            inkex.errormsg("len of wires before:{}".format(len(wires)))
-            wires = set(wires)
-            wires.remove(max_wire)
-            wires = list(wires)
-            wires = sorted(wires, key=lambda x: -x.bbox.top if is_horizontal else x.bbox.left)
-            inkex.errormsg("len of wires after:{}".format(len(wires)))
-        
-        if reversed_connection:
-            _ = [wire.set_flipped_points(is_horizontal) for wire in wires]
-            if has_connector:
-                self.connector.reverse_pins()
+    def group_wires(self, wires):
+        '''
+        Wires in the same grid are currently disjoint from each other
+        Need to group them together so they get connected together
+        '''
+        wire_groups = {}
+        # if self.is_horizontal_connection: # wires will have same x
+        for w in wires:
+            points = [p for p in w.path.end_points]
+            p = points[0]
+            key = p.x if self.is_horizontal_connection else p.y
+            if key not in wire_groups:
+                wire_groups[key] = [points]
             else:
-                max_wire.set_flipped_points(is_horizontal)
+                wire_groups[key].append(points)
+        for k in wire_groups:
+            if self.is_horizontal_connection: # sort wires from top to bottom
+                wire_groups[k] = sorted(wire_groups[k], key=lambda w:-w[0].y)
+            else: # sort wires from left to right
+                wire_groups[k] = sorted(wire_groups[k], key=lambda w:w[0].x)
 
-        inkex.errormsg([type(i) for i in wires])
-        union_wire_points, union_wire_sections = self.combine_wires(wires, is_horizontal) # map sections of unionized wire to each component wire multiplier
-        inkex.errormsg("NUM WIRES HERE:{}".format(wires[0].get_num_endpoints(is_horizontal)))
-        # now we splice in connector to union wire
-        connection_points = []
-        wire_point_idx = 0
-        if not has_connector:
-            max_wire_idx = 0 # only used in wire case
-            max_wire_points = max_wire.get_points()
-        inkex.errormsg("ALL POINTS: {}".format(len(union_wire_points)))
-        inkex.errormsg("SECTIONS: {}".format(union_wire_sections))
-        while wire_point_idx < len(union_wire_points):
-            inkex.errormsg("************************************")
-            inkex.errormsg("CURRENT INDEX:{}".format(wire_point_idx))
-            max_idx, wire_multiplier = self.get_section_multiplier(wire_point_idx, union_wire_sections)
-            inkex.errormsg("END OF THIS WIRE:{}".format(max_idx))
-            points = None
-            if wire_point_idx == 0: #starting wire line
-                inkex.errormsg("\t-------STARTING WIRE------------")
-                connection_points.extend(union_wire_points[wire_point_idx : wire_point_idx + 2 * wire_multiplier])
-                wire_point_idx += 2 * wire_multiplier
-            else:
-                inkex.errormsg("\t-------COMING FROM CONNECTOR TO WRAP------------")
-                mult = 2 * wire_multiplier # default is that wire wraps back around
-                next_idx = wire_point_idx + 2 * mult
-                inkex.errormsg("what is next idx:{} , {}".format(next_idx, max_idx))
-                if next_idx > max_idx:
-                    inkex.errormsg("wrapping intp next wire section")
-                    _, new_sect_multiplier = self.get_section_multiplier(next_idx, union_wire_sections)
-                    inkex.errormsg("MULT OF NEXT WIRE:{}".format(new_sect_multiplier))
-                    mult += new_sect_multiplier - 1
-                    inkex.errormsg("TOTAL POINTS TO JUMP:{}".format(mult * 2))
-                for _ in range(mult):
-                    connection_points.extend(union_wire_points[wire_point_idx : wire_point_idx + 2])
-                    wire_point_idx += 2
+        inkex.errormsg("num groups:{}\n\n\n".format(len(wire_groups.keys())))
+        return wire_groups
 
-            if wire_point_idx < len(union_wire_points):
-                if has_connector:
-                    connector_pins = self.connector.connect_pins()
-                    connector_points = ['{},{}'.format(p.x,p.y) for p in connector_pins]
-                    connection_points.extend(connector_points)
+                
+    def connect_wires(self, wire_groups_dict):
+        start_points = sorted(list(wire_groups_dict.keys()))        
+        wire_groups = [wire_groups_dict[k] for k in start_points]
+        wire_lens = [len(w) for w in wire_groups]
+        wire_indices = [0 for _ in range(len(wire_groups))] # starting indices
+        while wire_indices != wire_lens:
+            joint_wire_points = []
+            for i in range(len(wire_indices)):
+                wire_idx = wire_indices[i]
+                max_idx = wire_lens[i]
+                if wire_idx != max_idx:
+                    joint_wire_points.extend(wire_groups[i][wire_idx])
+                    wire_indices[i] += 1
+                    
+            joint_wire_points = ['{},{}'.format(p.x,p.y) for p in joint_wire_points]
+            self.create_path(joint_wire_points, is_horizontal=self.is_horizontal_connection)
+
+    def run(self):
+        
+        connector_pins = []
+        wires = []
+        for elem in self.svg.get_selected():
+            if type(elem) == PathElement: #connector
+                points = [p for p in elem.path.end_points] 
+                if len(points) == 4:
+                    connector_bbox = elem.bounding_box()
+                    connector_pins.append(elem)
                 else:
-                    max_multiplier = max_wire.get_num_wire_joins(is_horizontal)
-                    max_wire_splice_length = min(4 * max_multiplier, len(max_wire_points) - max_wire_idx)
-                    max_points = ['{},{}'.format(p.x,p.y) for p in max_wire_points[max_wire_idx: max_wire_idx + max_wire_splice_length]]
-                    max_wire_idx += max_wire_splice_length
-                    connection_points.extend(max_points)
-            else:
-                endpoints = wires[-1].get_num_endpoints(is_horizontal)
-                if endpoints % 2 == 1:
-                    if has_connector:
-                        connector_pins = self.connector.connect_pins()
-                        connector_points = ['{},{}'.format(p.x,p.y) for p in connector_pins]
-                        connection_points.extend(connector_points)
-                    else:
-                        max_multiplier = max_wire.get_num_wire_joins(is_horizontal)
-                        max_wire_splice_length = min(4 * max_multiplier, len(max_wire_points) - max_wire_idx)
-                        max_points = ['{},{}'.format(p.x,p.y) for p in max_wire_points[max_wire_idx: max_wire_idx + max_wire_splice_length]]
-                        max_wire_idx += max_wire_splice_length
-                        connection_points.extend(max_points)
+                    wires.append(elem)
 
-        # return union_wire_points # to debug wire unions
-        if not has_connector:
-            max_wire.wire.getparent().remove(max_wire.wire)
 
-        # return union_wire_points
-        return connection_points
-    
+        wire_groups = self.group_wires(wires)
+        self.connect_wires(wire_groups)
+        
+        # remove old wires
+        for elem in self.svg.get_selected(): elem.getparent().remove(elem)
+        return
+
     def create_path(self, points, is_horizontal):
         '''
         Creates a wire segment path given all of the points sequentially
@@ -280,7 +136,6 @@ class CombineGridsWorker():
         })
 
         inkex.errormsg("input points:{}".format(points))
-        inkex.errormsg("path str:{}".format(str(path.get_path())))
         line_attribs = {
                 'style' : "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
                 'd': str(path.get_path())
@@ -288,34 +143,6 @@ class CombineGridsWorker():
         }
         
         etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
-
-    def run(self):
-        
-        connector_pins = []
-        connector_bbox = None
-        for elem in self.svg.get_selected():
-            inkex.errormsg("what is type:{}".format(type(elem)))
-            if type(elem) == Polyline:
-                wire = Wire(elem)
-                self.wires.append(wire)
-            elif type(elem) == PathElement: #connector
-                points = [p for p in elem.path.end_points] 
-                if len(points) == 4:
-                    connector_bbox = elem.bounding_box()
-                    connector_pins.append(elem)
-                else:
-                    wire = Wire(elem)
-                    self.wires.append(wire)
-
-        if connector_bbox is not None:
-            self.connector = Connector(connector_pins, connector_bbox)
-        
-        inkex.errormsg("NUM OF WIRES @ INIT:{}".format(len(self.wires)))
-        inkex.errormsg("WHAT TYPE OF ALIGNMENT:{}".format(self.is_horizontal_connection))
-        if len(self.wires) == 2 and self.connector is None:
-            self.pair_wires_horizontally() if self.is_horizontal_connection else self.pair_wires_vertically()
-        else:
-            self.horizontal_grid_union() if self.is_horizontal_connection else self.vertical_grid_union()
 
 
 class Wire():
@@ -374,7 +201,6 @@ class Wire():
             flipped_points.extend(sect2[::-1])
             idx += 4 * multiplier
         return flipped_points
-
 
 
 if __name__ == '__main__':
