@@ -2,8 +2,7 @@ from argparse import ArgumentParser
 import inkex
 from inkex import Polyline, PathElement
 from lxml import etree
-from inkex.styles import Style
-
+from sympy import Segment, Point
 
 class Connector():
     '''
@@ -34,6 +33,7 @@ class Connector():
          return 1 
 
 
+MIN_GRID_SPACING = inkex.units.convert_unit(1.5, "mm") # change this to user input in future?
 class CombineGridsEffect(inkex.Effect):
     def add_arguments(self, pars):
         pars.add_argument("--alignment", type=int, help="The type of connection to make")
@@ -42,7 +42,6 @@ class CombineGridsEffect(inkex.Effect):
         arg_parser = ArgumentParser()
         self.add_arguments(arg_parser)
         args,_ = arg_parser.parse_known_args()
-        inkex.errormsg("what is alignment:{}".format(args.alignment))
         is_horizontal_connection = True if args.alignment == 1 else False
 
         combine_grids_worker = CombineGridsWorker(self.svg, is_horizontal_connection)
@@ -52,10 +51,10 @@ class CombineGridsEffect(inkex.Effect):
 class CombineGridsWorker():
     COMMANDS = ["combine_grids"]
     def __init__(self, svg, is_horizontal_connection):
-        print("WORKER INIT")
         self.svg = svg
         self.is_horizontal_connection = is_horizontal_connection
         self.wires = []
+        self.interpolation_wires = [] # for custom combination routing
         self.connector = None
 
 
@@ -63,8 +62,9 @@ class CombineGridsWorker():
         '''
         Wires in the same grid are currently disjoint from each other
         Need to group them together so they get connected together
-
         Need to fix this for when wire groups are angled (Same x/y won't apply)
+
+        TODO: integrate IDs somehow
         '''
         wire_groups = {}
         # if self.is_horizontal_connection: # wires will have same x
@@ -82,7 +82,6 @@ class CombineGridsWorker():
             else: # sort wires from left to right
                 wire_groups[k] = sorted(wire_groups[k], key=lambda w:w[0].x)
 
-        inkex.errormsg("num groups:{}\n\n\n".format(len(wire_groups.keys())))
         return wire_groups
 
                 
@@ -91,13 +90,13 @@ class CombineGridsWorker():
         wire_groups = [wire_groups_dict[k] for k in start_points]
         wire_lens = [len(w) for w in wire_groups]
         wire_indices = [0 for _ in range(len(wire_groups))] # starting indices
-        inkex.errormsg("interp start indices:{}".format(interp_start_indices))
+        generated_combined_wires = []
         while wire_indices != wire_lens:
             joint_wire_points = []
             interp_done = False # FIX THIS to better determine when to add interpolation wires!
             for wire_group_idx, curr_wire_idx in enumerate(wire_indices):
                 max_idx = wire_lens[wire_group_idx]
-                if curr_wire_idx != max_idx:
+                if curr_wire_idx != max_idx: # add the wire itself
                     current_wire = wire_groups[wire_group_idx][curr_wire_idx]
                     joint_wire_points.extend([[p.x, p.y] for p in current_wire])
                     wire_indices[wire_group_idx] += 1
@@ -106,17 +105,63 @@ class CombineGridsWorker():
                     elif curr_wire_idx == max_idx - 1: joint_wire_points.extend([[p.x,p.y] for p in interp_wires[1]])
                     else:
                         interp_points = self.add_interpolation_points(curr_wire_idx, interp_wires, interp_dict)
+                        # check if interp points intersect with any others
+                        #NEED ALL POINTS HERE!
                         joint_wire_points.extend(interp_points)
                     interp_done = True
-                    
+
+            generated_combined_wires.append(joint_wire_points)       
             joint_wire_points = ['{},{}'.format(p[0],p[1]) for p in joint_wire_points]
             self.create_path(joint_wire_points, is_horizontal=self.is_horizontal_connection)
+            
+            # can move this block before to prevent drawing of wires
+
+        is_valid_routing = self.has_valid_interpolation_points(generated_combined_wires)
+        if not is_valid_routing:
+            inkex.errormsg("Please change your template routing wires.")
+            return
     
+    def has_valid_interpolation_points(self, generated_combined_wires):
+        '''
+        generated_combined_wires: list of interpolation wire_points for each wire
+
+        checks if the interpolation wires (1) don't intersect and (2) are sufficienty far away from each other
+
+        the minimum pitch between interpolation wires determined by MIN_GRID_SPACING 
+        but can easily be made a user input in the future
+        '''
+        for wire1 in generated_combined_wires:
+            for wire2 in generated_combined_wires:
+                if wire1 != wire2:
+                    for i in range(len(wire1) - 1):
+                        wire1_p1 = Point(wire1[i])
+                        wire1_p2 = Point(wire1[i+1])
+                        wire1_segment = Segment(wire1_p1, wire1_p2)
+                        # check current segment across all segments in next wire
+                        for j in range(len(wire2) - 1):
+                            wire2_p1 = Point(wire2[j])
+                            wire2_p2 = Point(wire2[j+1])
+                            wire2_segment = Segment(wire2_p1, wire2_p2)
+
+                            # check for intersection
+                            intersection = wire1_segment.intersection(wire2_segment)
+
+                            if intersection != []:
+                                inkex.errormsg("There are intersecting routing wires present.")
+                                return False # has intersecting points
+                            
+                            # check for distance
+                            min_distance = min(wire1_segment.distance(wire2_p1), wire1_segment.distance(wire2_p2),
+                                               wire2_segment.distance(wire1_p1), wire2_segment.distance(wire1_p2))
+                            if min_distance < MIN_GRID_SPACING:
+                                inkex.errormsg("The routing wires are closer than the minimum {} distance.".format(MIN_GRID_SPACING))
+                                return False
+        return True
+
     def segment_line(self, line, num_points):
         '''
         Breaks line into num_points equal parts
         returns array of points 
-
         line: A shapely.LineString object (interpolation along line can be done manually but this is easier)
         '''
         points = []
@@ -129,16 +174,19 @@ class CombineGridsWorker():
         for i in range(1 ,num_points+2): # adjust from 0 to n+1 bc we cant put in 0 to the parameterized line equation
             x, y = parameterize_line(i * segment_length)
             points.append([x,y])
-        inkex.errormsg("what are points:{},{}".format(points, len(points)))
         return points
 
     def generate_interpolation_points(self, interpolation_wires, num_wires):
+        '''
+        Generates a dict mapping a pair of points on interpolation wires to the intermediate
+        points to be used by wires 
+        '''
         interp_dict = {}
         for i in range(len(interpolation_wires) - 1):
-            # exclude parts of interp wire that connect to sensor wire
+            
             wire1 = interpolation_wires[i]
             wire2 = interpolation_wires[i+1]
-            for j in range(1, len(wire1) - 1):
+            for j in range(1, len(wire1) - 1): # exclude parts of interp wire that connect to sensor wire
                 x1, y1 = wire1[j].x, wire1[j].y
                 x2, y2 = wire2[j].x, wire2[j].y
                 line = [[x1, y1], [x2, y2]]
@@ -149,7 +197,7 @@ class CombineGridsWorker():
                 # in this case, need to add additional detection mechanisms to see where they are
                 interp_points = self.segment_line(line, num_wires - 2)
                 interp_dict[(x1, y1, x2, y2)].extend(interp_points)
-                points = ['{},{}'.format(p[0],p[1]) for p in line]
+                # points = ['{},{}'.format(p[0],p[1]) for p in line]
                 # self.create_path(points, False)
         return interp_dict
 
@@ -193,9 +241,6 @@ class CombineGridsWorker():
 
     def run(self):
         
-        connector_pins = []
-        wires = []
-        interpolation_wires = [] # for custom combination routing
         for elem in self.svg.get_selected():
             if type(elem) == PathElement: #connector
                 points = [p for p in elem.path.end_points] 
@@ -203,30 +248,30 @@ class CombineGridsWorker():
                 #     connector_bbox = elem.bounding_box()
                 #     connector_pins.append(elem)
                 if len(points) > 2:
-                    interpolation_wires.append(points)
+                    self.interpolation_wires.append(points)
                 else:
-                    wires.append(points)
+                    self.wires.append(points)
 
 
-        wire_groups = self.group_wires(wires)
-        if len(interpolation_wires) == 0:
+        wire_groups = self.group_wires(self.wires)
+        if len(self.interpolation_wires) == 0:
             self.connect_wires(wire_groups)
         else: #custom connection
-            if len(interpolation_wires) > 2: # may not need to be the case in the future
+            if len(self.interpolation_wires) > 2: # may not need to be the case in the future
                 inkex.errormsg("only create two custom routes for interpolation")
                 return
             else:
                 # check lens of interpolation wires to make sure they are the same
-                len_wire = len(interpolation_wires[0])
-                same_length = all([len(w) == len_wire for w in interpolation_wires])
+                len_wire = len(self.interpolation_wires[0])
+                same_length = all([len(w) == len_wire for w in self.interpolation_wires])
                 if not same_length:
                     inkex.errormsg("interpolation wires have the same number of points")
                     return
                 if self.is_horizontal_connection:
-                    interpolation_wires = sorted(interpolation_wires, key=lambda w:-w[0].y)
+                    self.interpolation_wires = sorted(self.interpolation_wires, key=lambda w:-w[0].y)
                 else:
-                    interpolation_wires = sorted(interpolation_wires, key=lambda w:w[0].x)
-                self.connect_custom_wires(wire_groups, interpolation_wires)
+                    self.interpolation_wires = sorted(self.interpolation_wires, key=lambda w:w[0].x)
+                self.connect_custom_wires(wire_groups, self.interpolation_wires)
         
         # remove old wires
         for elem in self.svg.get_selected(): elem.getparent().remove(elem)
@@ -252,63 +297,6 @@ class CombineGridsWorker():
         
         etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
 
-
-class Wire():
-    def __init__(self, wire):
-        self.wire = wire
-        self.points = [p for p in self.wire.path.end_points]
-        # inkex.errormsg("wire_points:{}".format(["{},{}".format(p.x,p.y) for p in self.points]))
-        self.bbox = self.wire.bounding_box()
-
-    def get_num_wire_joins(self, is_horizontal):
-        '''
-        Determines how many wires were horizontally joined together to create the current wire object
-        The default is 1
-        '''
-        point_counter = 1
-        for i in range(len(self.points) - 1):
-            p1 = self.points[i]
-            p2 = self.points[i+1]
-            if (is_horizontal and p1.x == p2.x) or (not is_horizontal and p1.y == p2.y):
-                return point_counter // 2
-            else:
-                point_counter += 1
-        return 1
-    
-    def get_points(self):
-        return self.points
-
-    def get_num_endpoints(self, is_horizontal):
-        num_wires = 0
-        for p1 in self.points:
-            counter = 1
-            for p2 in self.points:
-                if p1 != p2:
-                    if is_horizontal:
-                        if p1.x == p2.x:
-                            counter += 1
-                    else:
-                        if p1.y == p2.y:
-                            counter += 1
-            if counter > num_wires:
-                num_wires = counter
-        return num_wires
-    
-    def set_flipped_points(self, is_horizontal):
-        self.points = self.get_flipped_points(is_horizontal)
-    
-    
-    def get_flipped_points(self, is_horizontal):
-        multiplier = self.get_num_wire_joins(is_horizontal)        
-        flipped_points = []
-        idx = 0
-        while idx < len(self.points):
-            sect1 = self.points[idx: idx + 2 * multiplier]
-            sect2 = self.points[idx + 2 * multiplier: idx + 4 * multiplier]
-            flipped_points.extend(sect1[::-1])
-            flipped_points.extend(sect2[::-1])
-            idx += 4 * multiplier
-        return flipped_points
 
 
 if __name__ == '__main__':
