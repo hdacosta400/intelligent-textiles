@@ -6,6 +6,8 @@ from inkex import Line, Rectangle, Path, Polyline
 from lxml import etree
 import pyembroidery
 import math
+from wiredb_proxy import WireDBProxy
+
 
 
 MIN_GRID_SPACING = inkex.units.convert_unit(2.5, "mm")
@@ -30,12 +32,7 @@ class CreateCustomGridEffect(inkex.Effect):
 
         shape_points = None
         for elem in self.svg.get_selected():
-            inkex.errormsg("wtf is elem:{},{}".format(elem, type(elem)))
             shape_points = [p for p in elem.path.end_points]
-            # if type(elem) == Rectangle:
-            #     for p in shape_points:
-            #         p.x = inkex.units.convert_unit(p.x, "mm")
-            #         p.y = inkex.units.convert_unit(p.y, "mm")
             if len(shape_points) > 5:
                 inkex.errormsg("Please create a 4-sided shape.")
                 return 
@@ -50,7 +47,7 @@ class CreateCustomGridWorker():
         self.num_vertical_wires = num_vertical_wires
         self.svg = svg
         self.upper_left, self.lower_left, self.upper_right, self.lower_right = self.compute_corners()
-    
+        self.wiredb_proxy = WireDBProxy()
 
     def compute_euclidean_distance(self, x1, y1, x2, y2):
         return math.sqrt((y2 - y1) ** 2 + (x2 - x1) ** 2)
@@ -87,8 +84,6 @@ class CreateCustomGridWorker():
         
     def run(self): 
         # self.draw_corners()
-        horizontal_wire = None
-        vertical_wire = None
         if self.num_horizontal_wires != 0:
             # look at left and right side, take shorter one to compute spacing   
             left_side_distance = self.compute_euclidean_distance(self.upper_left.x, self.upper_left.y,
@@ -107,8 +102,9 @@ class CreateCustomGridWorker():
                                 number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, horizontal_wire_spacing))
                 return
 
-            horizontal_wire = self.lay_horizontal_wires(left_side_distance, right_side_distance)
-        
+            horizontal_wire_ids = self.lay_horizontal_wires(left_side_distance, right_side_distance)
+            self.wiredb_proxy.insert_new_wire_group(horizontal_wire_ids)
+
         if self.num_vertical_wires != 0:
             top_side_distance = self.compute_euclidean_distance(self.upper_left.x, self.upper_left.y,
                                                                  self.upper_right.x, self.upper_right.y)
@@ -125,8 +121,8 @@ class CreateCustomGridWorker():
                                 number of wires or increase the size of the grid and try again.'''.format(MIN_GRID_SPACING, vertical_wire_spacing))
                 return
 
-            vertical_wire = self.lay_vertical_wires(top_side_distance, bottom_side_distance)
-
+            vertical_wire_ids = self.lay_vertical_wires(top_side_distance, bottom_side_distance)
+            self.wiredb_proxy.insert_new_wire_group(vertical_wire_ids)
     
     def segment_line(self, line, line_distance, num_points):
         '''
@@ -142,7 +138,7 @@ class CreateCustomGridWorker():
             return x_t, y_t
         
         segment_length = 1 / (num_points + 1)
-        for i in range(1 ,num_points+2): # adjust from 0 to n+1 bc we cant put in 0 to the parameterized line equation
+        for i in range(1 ,num_points+1): # adjust from 0 to n+1 bc we cant put in 0 to the parameterized line equation
             x, y = parameterize_line(i * segment_length)
             points.append([x,y])
         return points
@@ -151,8 +147,11 @@ class CreateCustomGridWorker():
         left_line = [(self.upper_left.x, self.upper_left.y), (self.lower_left.x, self.lower_left.y)]
         right_line = [(self.upper_right.x, self.upper_right.y), (self.lower_right.x, self.lower_right.y)]
         left_side_points = self.segment_line(left_line, left_side_distance, self.num_horizontal_wires)
+
         right_side_points = self.segment_line(right_line, right_side_distance, self.num_horizontal_wires)
-        self.lay_wire(left_side_points, right_side_points, is_horizontal=True)
+
+        inkex.errormsg("\n\n num points lr:{} {}".format(len(left_side_points), len(right_side_points)))
+        return self.lay_wire(left_side_points, right_side_points, is_horizontal=True)
 
     
     def lay_vertical_wires(self, top_side_distance, bottom_side_distance):
@@ -160,7 +159,7 @@ class CreateCustomGridWorker():
         bottom_line = [(self.lower_left.x, self.lower_left.y), (self.lower_right.x, self.lower_right.y)]
         top_side_points = self.segment_line(top_line, top_side_distance, self.num_vertical_wires)
         bottom_side_points = self.segment_line(bottom_line, bottom_side_distance, self.num_vertical_wires)
-        self.lay_wire(top_side_points, bottom_side_points, is_horizontal=False)
+        return self.lay_wire(top_side_points, bottom_side_points, is_horizontal=False)
     
 
     def lay_wire(self, wire1_points, wire2_points, is_horizontal):
@@ -168,30 +167,34 @@ class CreateCustomGridWorker():
         wire_count = 0
         wire1_idx = 0
         wire2_idx = 0
+        wire_ids = []
         while wire1_idx < len(wire1_points) and wire2_idx < len(wire2_points):
-            if wire_count % 2 == 0:
-                if wire1_idx < len(wire1_points):
-                    points.append('{},{}'.format(wire1_points[wire1_idx][0], wire1_points[wire1_idx][1]))
-                    wire1_idx += 1
-                if wire2_idx < len(wire2_points):
-                    points.append('{},{}'.format(wire2_points[wire2_idx][0], wire2_points[wire2_idx][1]))
-                    wire2_idx += 1
-            else:
-                if wire2_idx < len(wire2_points):
-                    points.append('{},{}'.format(wire2_points[wire2_idx][0], wire2_points[wire2_idx][1]))
-                    wire2_idx += 1 
-                if wire1_idx < len(wire1_points):
-                    points.append('{},{}'.format(wire1_points[wire1_idx][0], wire1_points[wire1_idx][1]))
-                    wire1_idx += 1
-            wire_count += 1
-        return self.create_path(points, is_horizontal) 
+            # if wire_count % 2 == 0:
+            if wire1_idx < len(wire1_points):
+                points.append('{},{}'.format(wire1_points[wire1_idx][0], wire1_points[wire1_idx][1]))
+                wire1_idx += 1
+            if wire2_idx < len(wire2_points):
+                points.append('{},{}'.format(wire2_points[wire2_idx][0], wire2_points[wire2_idx][1]))
+                wire2_idx += 1
+            wire = self.create_path(points, is_horizontal)
+            wire_ids.append(wire.get_id())
+            points = []
+            # else:
+            #     if wire2_idx < len(wire2_points):
+            #         points.append('{},{}'.format(wire2_points[wire2_idx][0], wire2_points[wire2_idx][1]))
+            #         wire2_idx += 1 
+            #     if wire1_idx < len(wire1_points):
+            #         points.append('{},{}'.format(wire1_points[wire1_idx][0], wire1_points[wire1_idx][1]))
+            #         wire1_idx += 1
+        inkex.errormsg("num wires generated:{} is horz:{}".format(len(wire_ids), is_horizontal))
+        return wire_ids
 
     def create_path(self, points, is_horizontal):
         '''
         Creates a wire segment path given all of the points sequentially
         '''
-        color = 'red' if is_horizontal else 'blue'
-        inkex.errormsg("point order:{}".format(points))
+        
+        color = "red" if is_horizontal else "blue"
         path_str = ' '.join(points)
         path = inkex.Polyline(attrib={
         'id': "wire_segment",
@@ -201,9 +204,11 @@ class CreateCustomGridWorker():
         line_attribs = {
                 'style' : "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
                 'd': str(path.get_path())
+                # 'points': 'M 0,0 9,9 5,5'
         }
-        etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
-        return path
+        
+        elem = etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
+        return elem
 
 if __name__ == '__main__':
     CreateCustomGridEffect().run()

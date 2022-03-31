@@ -67,7 +67,6 @@ class CombineGridsWorker():
         Need to group them together so they get connected together
         Need to fix this for when wire groups are angled (Same x/y won't apply)
 
-        TODO: integrate IDs somehow
         '''
 
         wire_groups = {}
@@ -84,6 +83,11 @@ class CombineGridsWorker():
                         self.interpolation_wires.append(wires[idx])
                         wires_allocated.append(wires[idx])
                     else:
+
+                        if self.is_horizontal_connection: # sort wires from top to bottom
+                            wire_group = sorted(wire_group, key=lambda w:-[p for p in id_to_wire[w].path.end_points][0].y)
+                        else: # sort wires from left to right
+                            wire_group = sorted(wire_group, key=lambda w: [p for p in id_to_wire[w].path.end_points][0].x)
                         wire_groups[min(wire_group)] = [id_to_wire[id] for id in wire_group] # get wire object of id
                         wires_allocated.extend(wire_group)
 
@@ -294,7 +298,7 @@ class CombineGridsWorker():
         for elem in self.svg.get_selected():
             if type(elem) == PathElement: #connector
                 points = [p for p in elem.path.end_points] 
-                inkex.errormsg("\n\n\nPOINTS:{}".format(points))
+                inkex.errormsg("\n\n\IDs:{}".format(elem.get_id()))
                 self.wires.append(elem)
 
         wire_groups = self.group_wires(self.wires)
@@ -335,7 +339,8 @@ class CombineGridsWorker():
                 self.connect_custom_wires(wire_groups)
         
         # remove old wires
-        # TODO: insert logic for removing these IDs from the db
+        old_wire_ids = [elem.get_id() for elem in self.svg.get_selected()]
+        # self.wiredb_proxy.delete_wire_groups_with_id(old_wire_ids)
         for elem in self.svg.get_selected(): elem.getparent().remove(elem)
         return
 
