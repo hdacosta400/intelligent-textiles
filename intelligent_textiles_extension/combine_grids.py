@@ -1,8 +1,10 @@
 from argparse import ArgumentParser
+from ast import Return
 import inkex
 from inkex import Polyline, PathElement
 from lxml import etree
 from sympy import Segment, Point
+from wiredb_proxy import WireDBProxy
 
 class Connector():
     '''
@@ -56,6 +58,7 @@ class CombineGridsWorker():
         self.wires = []
         self.interpolation_wires = [] # for custom combination routing
         self.connector = None
+        self.wiredb_proxy = WireDBProxy()
 
 
     def group_wires(self, wires):
@@ -66,31 +69,75 @@ class CombineGridsWorker():
 
         TODO: integrate IDs somehow
         '''
-        wire_groups = {}
-        # if self.is_horizontal_connection: # wires will have same x
-        for w_points in wires:
-            # points = [p for p in w.path.end_points]
-            p = w_points[0]
-            key = p.x if self.is_horizontal_connection else p.y
-            if key not in wire_groups:
-                wire_groups[key] = [w_points]
-            else:
-                wire_groups[key].append(w_points)
-        for k in wire_groups:
-            if self.is_horizontal_connection: # sort wires from top to bottom
-                wire_groups[k] = sorted(wire_groups[k], key=lambda w:-w[0].y)
-            else: # sort wires from left to right
-                wire_groups[k] = sorted(wire_groups[k], key=lambda w:w[0].x)
 
+        wire_groups = {}
+        wire_ids = [wire.get_id() for wire in wires]
+        id_to_wire = {wire.get_id() : wire for wire in wires}
+        wires_allocated = []
+
+        while len(wires_allocated) != len(wire_ids):
+            for idx, w_id in enumerate(wire_ids):
+                if w_id not in wires_allocated:
+                    wire_group = self.wiredb_proxy.retrieve_wire_group_with_id(w_id)
+                    if wire_group == []: # interpolation wire!
+                        inkex.errormsg("points of interp wire @ group detetction:{}".format(len([[p.x,p.y] for p in wires[idx].path.end_points])))
+                        self.interpolation_wires.append(wires[idx])
+                        wires_allocated.append(wires[idx])
+                    else:
+                        wire_groups[min(wire_group)] = [id_to_wire[id] for id in wire_group] # get wire object of id
+                        wires_allocated.extend(wire_group)
+
+        # OLD
+        # if self.is_horizontal_connection: # wires will have same x
+        # for w_points in wires:
+        #     # points = [p for p in w.path.end_points]
+        #     p = w_points[0]
+        #     key = p.x if self.is_horizontal_connection else p.y
+        #     if key not in wire_groups:
+        #         wire_groups[key] = [w_points]
+        #     else:
+        #         wire_groups[key].append(w_points)
+        # for k in wire_groups:
+        #     if self.is_horizontal_connection: # sort wires from top to bottom
+        #         wire_groups[k] = sorted(wire_groups[k], key=lambda w:-w[0].y)
+        #     else: # sort wires from left to right
+        #         wire_groups[k] = sorted(wire_groups[k], key=lambda w:w[0].x)
+
+        # remove interpolation wires from wire groups
+        inkex.errormsg("num interp wires detected:{}".format(len(self.interpolation_wires)))
+        tmp_wires = [w for w in self.wires if w not in self.interpolation_wires]
+        self.wires = tmp_wires
         return wire_groups
 
                 
+    def arrange_wire_groups(self, wire_groups_dict):
+        '''
+        Before connecting wire groups, we first need to arrange them 
+        from left -> right for horizontal connections and top -> bottom for 
+        vertical connections
+
+        returns: list of keys in wire_groups dict sorted by this order
+        '''
+        key_wirepoint_pairs = [] # list of (key, first wire point in key group)
+        for key in wire_groups_dict.keys():
+            inkex.errormsg("what is wire group dict:{}".format(wire_groups_dict[key]))
+            wire1_points = [p for p in wire_groups_dict[key][0].path.end_points]
+            key_wirepoint_pairs.append((key, wire1_points[0]))
+        if self.is_horizontal_connection: # left to right
+            key_wirepoint_pairs = sorted(key_wirepoint_pairs, key=lambda p: p[1].x)
+        else:
+            key_wirepoint_pairs = sorted(key_wirepoint_pairs, key=lambda p: -p[1].y)
+        
+        return [k for k,_ in key_wirepoint_pairs]
+    
+
     def connect_wires(self, wire_groups_dict, interp_wires=None, interp_dict=None, interp_start_indices=None):
-        start_points = sorted(list(wire_groups_dict.keys()))        
+        start_points = self.arrange_wire_groups(wire_groups_dict)     
         wire_groups = [wire_groups_dict[k] for k in start_points]
         wire_lens = [len(w) for w in wire_groups]
         wire_indices = [0 for _ in range(len(wire_groups))] # starting indices
         generated_combined_wires = []
+        generated_ids = []
         while wire_indices != wire_lens:
             joint_wire_points = []
             interp_done = False # FIX THIS to better determine when to add interpolation wires!
@@ -98,24 +145,26 @@ class CombineGridsWorker():
                 max_idx = wire_lens[wire_group_idx]
                 if curr_wire_idx != max_idx: # add the wire itself
                     current_wire = wire_groups[wire_group_idx][curr_wire_idx]
-                    joint_wire_points.extend([[p.x, p.y] for p in current_wire])
+                    joint_wire_points.extend([[p.x, p.y] for p in current_wire.path.end_points])
                     wire_indices[wire_group_idx] += 1
+    
                 if interp_wires is not None and not interp_done: # add custom routes if inputted by user
                     if curr_wire_idx == 0: joint_wire_points.extend([[p.x,p.y] for p in interp_wires[0]])
                     elif curr_wire_idx == max_idx - 1: joint_wire_points.extend([[p.x,p.y] for p in interp_wires[1]])
                     else:
                         interp_points = self.add_interpolation_points(curr_wire_idx, interp_wires, interp_dict)
-                        # check if interp points intersect with any others
-                        #NEED ALL POINTS HERE!
                         joint_wire_points.extend(interp_points)
                     interp_done = True
 
             generated_combined_wires.append(joint_wire_points)       
             joint_wire_points = ['{},{}'.format(p[0],p[1]) for p in joint_wire_points]
-            self.create_path(joint_wire_points, is_horizontal=self.is_horizontal_connection)
-            
-            # can move this block before to prevent drawing of wires
+            elem = self.create_path(joint_wire_points, is_horizontal=self.is_horizontal_connection)
+            generated_ids.append(elem.get_id())
 
+        # generate new grouping of wires
+        self.wiredb_proxy.insert_new_wire_group(generated_ids)
+
+        # can move this block before to prevent drawing of wires
         is_valid_routing = self.has_valid_interpolation_points(generated_combined_wires)
         if not is_valid_routing:
             inkex.errormsg("Please change your template routing wires.")
@@ -213,14 +262,15 @@ class CombineGridsWorker():
 
         return interp_start_indices
 
-    def connect_custom_wires(self, wire_groups_dict, interpolation_wires):
+    def connect_custom_wires(self, wire_groups_dict):
         # how many wires are grouped together???
         num_wires = len(wire_groups_dict[list(wire_groups_dict.keys())[0]])
+        interpolation_wires = [[p for p in w.path.end_points] for w in self.interpolation_wires]
         interp_dict = self.generate_interpolation_points(interpolation_wires, num_wires)
 
         # determine the wiregroups where the interpolation wires start
-        interp_start_indices = self.calculate_interp_wire_group(wire_groups_dict, interpolation_wires)
-        self.connect_wires(wire_groups_dict, interpolation_wires, interp_dict, interp_start_indices)  
+        # interp_start_indices = self.calculate_interp_wire_group(wire_groups_dict, interpolation_wires)
+        self.connect_wires(wire_groups_dict, interpolation_wires, interp_dict, interp_start_indices=None)  
 
 
     def add_interpolation_points(self, wire_idx, interpolation_wires, interpolation_dict):
@@ -240,18 +290,12 @@ class CombineGridsWorker():
         
 
     def run(self):
-        
+ 
         for elem in self.svg.get_selected():
             if type(elem) == PathElement: #connector
                 points = [p for p in elem.path.end_points] 
-                # if len(points) == 4: # figure out differnt condition for this
-                #     connector_bbox = elem.bounding_box()
-                #     connector_pins.append(elem)
-                if len(points) > 2:
-                    self.interpolation_wires.append(points)
-                else:
-                    self.wires.append(points)
-
+                inkex.errormsg("\n\n\nPOINTS:{}".format(points))
+                self.wires.append(elem)
 
         wire_groups = self.group_wires(self.wires)
         if len(self.interpolation_wires) == 0:
@@ -267,13 +311,31 @@ class CombineGridsWorker():
                 if not same_length:
                     inkex.errormsg("interpolation wires have the same number of points")
                     return
+                
+                # sort interpolation wires
+                interp_wire_points = []
+                interp_wire_dict = {}
+                for interp in self.interpolation_wires:
+                    points = [p for p in interp.path.end_points]
+                    interp_wire_points.append(points)
+                    interp_wire_dict[interp] = points
+                inkex.errormsg('what is wire points:{}'.format(interp_wire_points))
                 if self.is_horizontal_connection:
-                    self.interpolation_wires = sorted(self.interpolation_wires, key=lambda w:-w[0].y)
+                    interp_wire_points = sorted(interp_wire_points, key=lambda w:-w[0].y)
                 else:
-                    self.interpolation_wires = sorted(self.interpolation_wires, key=lambda w:w[0].x)
-                self.connect_custom_wires(wire_groups, self.interpolation_wires)
+                    interp_wire_points = sorted(interp_wire_points, key=lambda w:w[0].x)
+                
+                tmp_interp_wires = []
+                for p in interp_wire_points:
+                    # find the wire that set of points corresponds to 
+                    for key in interp_wire_dict.keys():
+                        if interp_wire_dict[key] == p:
+                            tmp_interp_wires.append(key)
+                self.interpolation_wires = tmp_interp_wires
+                self.connect_custom_wires(wire_groups)
         
         # remove old wires
+        # TODO: insert logic for removing these IDs from the db
         for elem in self.svg.get_selected(): elem.getparent().remove(elem)
         return
 
@@ -295,8 +357,8 @@ class CombineGridsWorker():
                 # 'points': 'M 0,0 9,9 5,5'
         }
         
-        etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
-
+        elem = etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
+        return elem
 
 
 if __name__ == '__main__':
