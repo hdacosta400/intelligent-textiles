@@ -6,6 +6,7 @@ from inkex import Polyline, PathElement
 from lxml import etree
 from sympy import Segment, Point
 from wiredb_proxy import WireDBProxy
+import wire_util
 
 class Connector():
 	'''
@@ -139,13 +140,12 @@ class CombineGridsWorker():
 				# range where interpolation routing is present
 				start, end = self.interp_wire_helper.is_in_group_interpolation_range(group_key, curr_wire_idx)
 				if start is not None: # we are in interpolation range!
-					inkex.errormsg("IN interp range!")
 					interp_points = self.interp_wire_helper.get_custom_interpolation_route(group_key, start, end, curr_wire_idx)
 					joint_wire_points.extend(interp_points)
 
 			generated_combined_wires.append(joint_wire_points)       
 			joint_wire_points = ['{},{}'.format(p[0],p[1]) for p in joint_wire_points]
-			elem = self.create_path(joint_wire_points, is_horizontal=self.is_horizontal_connection)
+			elem = wire_util.create_path(self.svg, joint_wire_points, is_horizontal=self.is_horizontal_connection)
 			generated_ids.append(elem.get_id())
 
 		# generate new grouping of wires
@@ -156,16 +156,6 @@ class CombineGridsWorker():
 		if not is_valid_routing:
 			inkex.errormsg("Please change your template routing wires.")
 			return
-
-	def connect_custom_wires(self, wire_groups_dict):
-		# how many wires are grouped together???
-		num_wires = len(wire_groups_dict[list(wire_groups_dict.keys())[0]])
-		interpolation_wires = [[p for p in w.path.end_points] for w in self.interpolation_wires]
-		interp_dict = self.generate_interpolation_points(interpolation_wires, num_wires)
-
-		# determine the wiregroups where the interpolation wires start
-		# interp_start_indices = self.calculate_interp_wire_group(wire_groups_dict, interpolation_wires)
-		self.connect_wires(wire_groups_dict, interpolation_wires, interp_dict, interp_start_indices=None) 
 
 	def has_valid_interpolation_points(self, generated_combined_wires):
 		'''
@@ -204,89 +194,11 @@ class CombineGridsWorker():
 								return False
 		return True
 
-	def segment_line(self, line, num_points):
-		'''
-		Breaks line into num_points equal parts
-		returns array of points 
-		line: A shapely.LineString object (interpolation along line can be done manually but this is easier)
-		'''
-		points = []
-		def parameterize_line(t):
-			x_t = line[0][0] + (line[1][0] - line[0][0]) * t
-			y_t = line[0][1] + (line[1][1] - line[0][1]) * t
-			return x_t, y_t
-		
-		segment_length = 1 / (num_points + 1)
-		for i in range(1 ,num_points+2): # adjust from 0 to n+1 bc we cant put in 0 to the parameterized line equation
-			x, y = parameterize_line(i * segment_length)
-			points.append([x,y])
-		return points 
-
-	def generate_interpolation_points(self, interpolation_wires, num_wires):
-		'''
-		Generates a dict mapping a pair of points on interpolation wires to the intermediate
-		points to be used by wires 
-		'''
-		interp_dict = {}
-		for i in range(len(interpolation_wires) - 1):
-			
-			wire1 = interpolation_wires[i]
-			wire2 = interpolation_wires[i+1]
-			for j in range(1, len(wire1) - 1): # exclude parts of interp wire that connect to sensor wire
-				x1, y1 = wire1[j].x, wire1[j].y
-				x2, y2 = wire2[j].x, wire2[j].y
-				line = [[x1, y1], [x2, y2]]
-				interp_dict[(x1, y1, x2, y2)] = [[x1, y1]]
-				# FOR NOW, assume interp wires are placed @ top and bottommost wire
-				# need to account for these points already placed by subtracting 2
-				# in future, user may only want custom wiring for SOME wires and default for others
-				# in this case, need to add additional detection mechanisms to see where they are
-				interp_points = self.segment_line(line, num_wires - 2)
-				interp_dict[(x1, y1, x2, y2)].extend(interp_points)
-				# points = ['{},{}'.format(p[0],p[1]) for p in line]
-				# self.create_path(points, False)
-		return interp_dict
-
-	def calculate_interp_wire_group(self, wire_groups_dict, interpolation_wires):
-		'''
-		Find where interpolation wires start on a wire group
-		(and where they end on another?)
-		'''
-		start_points = sorted(list(wire_groups_dict.keys()))
-		interp_start_indices = []
-		for sp in start_points:
-			for wire_idx, wire in enumerate(wire_groups_dict[sp]):
-			# assumption that interpolation wire starts at END of a wire
-				for w in interpolation_wires:
-					if wire[-1].x == w[0][0] and wire[-1].y == w[0][1]:
-						interp_start_indices.append((sp,wire_idx))
-
-		return interp_start_indices
- 
-
-
-	def add_interpolation_points(self, wire_idx, interpolation_wires, interpolation_dict):
-		'''
-		Generates list of interpolation points to add to current wire
-		FOR NOW ASSUMING TWO INTERPOLATION WIRES
-		'''
-		wire1, wire2 = interpolation_wires
-		intermediate_points = []
-		for i in range(1, len(wire1) - 1):
-			x1, y1 = wire1[i].x, wire1[i].y
-			xn, yn = wire2[i].x , wire2[i].y
-			interpolation_points = interpolation_dict[(x1,y1,xn,yn)]
-			intermediate_points.append(interpolation_points[wire_idx])
-		return intermediate_points
-
-		
-
 	def run(self):
  
 		for elem in self.svg.get_selected():
 			if type(elem) == PathElement: #connector
 				points = [p for p in elem.path.end_points] 
-				# inkex.errormsg("\n\n\IDs:{}".format(elem.get_id()))
 				self.wires.append(elem)
 
 		wire_groups = self.group_wires(self.wires)
@@ -368,19 +280,16 @@ class InterpolationWires():
 
 
 	def localize_interpolation_wire(self, start_point):
-		inkex.errormsg("\n\n start point of interp: {} \n\n".format(start_point))
 		for g_key in self.wire_groups_dict.keys():
 			wire_group = self.wire_groups_dict[g_key]
 			for wire_idx, wire_elem in enumerate(wire_group):
 				wire_points = [p for p in wire_elem.path.end_points]
 				wire_start = wire_points[0]
 				wire_end = wire_points[-1]
-				inkex.errormsg("\n\nstart end {}  {}\n\n".format(wire_start, wire_end))
 				def check_same_point(p1, p2):
 					return round(p1.x, 2) == round(p2.x, 2) and round(p1.y, 2) == round(p2.y, 2)
 				inkex.errormsg(round(start_point.x,2) == round(wire_end.x,2) and round(start_point.y,2) == round(wire_end.y, 2))
 				if check_same_point(start_point, wire_start) or check_same_point(start_point, wire_end):
-					inkex.errormsg("FOUND A WIRE!")
 					if g_key not in self.group_interpolation_ranges:
 						self.group_interpolation_ranges[g_key] = []
 					self.group_interpolation_ranges[g_key].append(wire_idx)
@@ -406,7 +315,6 @@ class InterpolationWires():
 			else:
 				self.group_connections[w.get_id()] = (group1, group1_idx)
 
-		inkex.errormsg("what is ranges:{}".format(self.group_interpolation_ranges))
 
 	def get_group_interpolation_range(self, g_key):
 		'''
@@ -460,12 +368,8 @@ class InterpolationWires():
 		TODO: MAKE THIS DOCUMENTATION CLEARER
 		'''
 		interp_dict = {}
-		# if g_key in self.group_interpolation_ranges.keys():
-		# 	interp_range = self.group_interpolation_ranges[g_key]
-		# 	if start_idx in interp_range and end_idx in interp_range:
 		for g_key in self.group_interpolation_ranges.keys(): # for every group
 			interp_range = self.group_interpolation_ranges[g_key] # get interpolation range
-			inkex.errormsg("\n\nwhat is interp range:{}".format(interp_range))
 			for i in range(len(interp_range) - 1): # go over interp wires in pairs
 				start_idx = interp_range[i] # first wire index
 				end_idx = interp_range[i+1] # second wire index
@@ -480,7 +384,9 @@ class InterpolationWires():
 				end_interp_wire = find_wire(g_key, end_idx)
 				start_interp_wire_points = [p for p in start_interp_wire.path.end_points]
 				end_interp_wire_points = [p for p in end_interp_wire.path.end_points]
-				inkex.errormsg("interp wire points: {} \n\n {}".format(start_interp_wire_points, end_interp_wire_points))
+				if len(start_interp_wire_points) != len(end_interp_wire_points):
+					inkex.errormsg("interpolation wires connecting the same groups must have the same number of points!")
+					return
 				num_wires = end_idx - start_idx + 1
 				# generate interpolation points between the two wires
 				for point_idx in range(1, len(start_interp_wire_points) - 1): # exclude parts of interp wire that connect to sensor wire
@@ -488,7 +394,7 @@ class InterpolationWires():
 					x2, y2 = end_interp_wire_points[point_idx].x, end_interp_wire_points[point_idx].y
 					line = [[x1, y1], [x2, y2]] 
 					interp_dict[(x1, y1, x2, y2)] = [[x1, y1]] # map these points to the line connecting corresponding points
-					interp_points = self.segment_line(line, num_wires - 2) # partition the line into num_wires parts
+					interp_points = wire_util.segment_line(line, num_wires - 2) # partition the line into num_wires parts
 					interp_dict[(x1, y1, x2, y2)].extend(interp_points)
 
 				# we now have a dict of interpolation points, mapping each pair of points

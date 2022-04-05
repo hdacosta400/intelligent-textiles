@@ -6,9 +6,15 @@ import numpy as np
 from matplotlib import pyplot as plt
 from lxml import etree
 import math
-from bezier import Curve
+from bezier import Curve # TODO: giving some binary issues! CRASHING PYTHON
+
+'''
+ValueError: numpy.ndarray size changed, may indicate binary incompatibility. 
+Expected 88 from C header, got 80 from PyObject
+'''
+
 import simplepath
-import js2py
+import wire_util
 
 class MakeStitchesEffect(inkex.Effect):
     def add_arguments(self, pars):
@@ -29,36 +35,15 @@ class MakeStitchesEffect(inkex.Effect):
         # debugging for mapping out control and end points of a path
         # poi = [p for p in wire.path.end_points]
         # points = ['{},{}'.format(p.x,p.y) for p in poi]
-        # self.create_path(points, True)
+        # wire_util.create_path(self.svg, points, True)
         # poi = [p for p in wire.path.control_points]
         # points = ['{},{}'.format(p.x,p.y) for p in poi]
-        # self.create_path(points, False)
+        # wire_util.create_path(self.svg, points, False)
         
         is_curve = True if args.wire_type == 1 else False
         make_stitches_worker = MakeStitchesWorker(wires, is_curve, args.file_name, args.dst_folder)
         inkex.errormsg("what is file path:{}".format(args.dst_folder))
         make_stitches_worker.run()
-    
-    def create_path(self, points, is_horizontal):
-        '''
-        Creates a wire segment path given all of the points sequentially
-        '''
-    
-        color = "red" if is_horizontal else "blue"
-        path_str = ' '.join(points)
-        path = inkex.Polyline(attrib={
-        'id': "wire_segment",
-        'points': path_str,
-        })
-
-        line_attribs = {
-                'style' : "stroke: %s; stroke-width: 0.4; fill: none; stroke-dasharray:0.4,0.4" % color,
-                'd': str(path.get_path())
-                # 'points': 'M 0,0 9,9 5,5'
-        }
-        
-        etree.SubElement(self.svg.get_current_layer(), inkex.addNS('path','svg'), line_attribs)  
-        return path
 
 class MakeStitchesWorker(inkex.Effect):
     def __init__(self, wires, is_curve, filename, dst_folder):
@@ -122,28 +107,6 @@ class MakeStitchesWorker(inkex.Effect):
             all_curves.append(stitch_points)
         return all_curves
 
-    def compute_euclidean_distance(self, x1, y1, x2, y2):
-        return math.sqrt((y2 - y1) ** 2 + (x2 - x1) ** 2)
-
-    def segment_line(self, line, num_points):
-        '''
-        Breaks line into num_points equal parts
-        returns array of points 
-
-        line: A shapely.LineString object (interpolation along line can be done manually but this is easier)
-        '''
-        points = []
-        def parameterize_line(t):
-            x_t = line[0][0] + (line[1][0] - line[0][0]) * t
-            y_t = line[0][1] + (line[1][1] - line[0][1]) * t
-            return x_t, y_t
-        
-        segment_length = 1 / (num_points + 1)
-        for i in range(1 ,num_points+2): # adjust from 0 to n+1 bc we cant put in 0 to the parameterized line equation
-            x, y = parameterize_line(i * segment_length)
-            points.append([x,y])
-        return points
-
     def stitch_segment(self):
         
         stitch_points = []
@@ -155,18 +118,14 @@ class MakeStitchesWorker(inkex.Effect):
                 # stitch_points.append([p1.x, p1.y])
                 line = [[p1.x, p1.y], [p2.x, p2.y]]
                 num_points = 3 # could make this a user input somehow?
-                line_points = [[p1.x, p1.y]] + self.segment_line(line, num_points)
+                line_points = [[p1.x, p1.y]] + wire_util.segment_line(line, num_points)
                 if count % 2 == 1:
                     line_points = line_points[::-1]
 
                 stitch_points.append(line_points)
             count += 1
-        inkex.errormsg(stitch_points)
         return stitch_points
 
-
-
-        
     def make_stitches(self, stitch_group):
         pattern = pyembroidery.EmbPattern()
         for stitch_points in stitch_group:
@@ -190,7 +149,7 @@ class MakeStitchesWorker(inkex.Effect):
         i = 0
         while i <= num_of_stitches - 1: 
             plt.annotate(i, (x_coord[i], y_coord[i]))
-            i += 1
+            i += 10
 
         #label axis
         plt.title("Stitch Vis")
